@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>RATA Range Ops</title>
+<style>body{font:17px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:40px 20px;color:#1d1d1f;background:#fff}#msg{max-width:520px;margin:0 auto}</style>
+</head>
+<body>
+<div id="msg">Loading…</div>
+<script>
+/* RATA Range Ops front door. Email links come here; this page loads the RATA Public Page
+   without the visitor's Google sign-in, which some signed-in accounts cannot get past.
+   The private key in each link still decides what the person can see and do. */
+(function(){
+  var EXEC='https://script.google.com/macros/s/AKfycbzcbZB19m65-1Upfx_Te7omDKehVwr0aPw2gZi31q-AYRWiNeSUuHI2nRuru-xyx2yw/exec';
+  function fail(t){document.getElementById('msg').innerHTML='<b>This page did not load.</b><br>'+t+'<br><br>Check your connection and try again, or reply to the RATA email.';}
+  function call(fn,args){
+    return fetch(EXEC,{method:'POST',credentials:'omit',redirect:'follow',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({fn:fn,args:args})})
+      .then(function(r){return r.json();})
+      .then(function(j){if(!j||!j.ok){var e=new Error((j&&j.err)||'Something went wrong. Please try again.');e.name='ScriptError';throw e;}return j.r;});
+  }
+  function runner(ok,ko,uo){
+    return new Proxy({},{get:function(o,name){
+      if(name==='withSuccessHandler')return function(h){return runner(h,ko,uo);};
+      if(name==='withFailureHandler')return function(h){return runner(ok,h,uo);};
+      if(name==='withUserObject')return function(u){return runner(ok,ko,u);};
+      return function(){var a=[].slice.call(arguments);call(String(name),a).then(function(r){if(ok)ok(r,uo);},function(e){if(ko)ko(e,uo);else console.error(e);});};
+    }});
+  }
+  var q=location.search.replace(/^\?/,'');
+  var params={};new URLSearchParams(q).forEach(function(v,k){params[k]=v;});
+  window.google={script:{run:runner(),
+    host:{close:function(){},setHeight:function(){},setWidth:function(){},editor:{focus:function(){}},origin:location.origin},
+    url:{getLocation:function(cb){cb({parameter:params,parameters:{},hash:location.hash.replace(/^#/,'')});}},
+    history:{push:function(){},replace:function(){},setChangeHandler:function(){}}}};
+  fetch(EXEC+'?api=page'+(q?'&'+q:''),{credentials:'omit',redirect:'follow'})
+    .then(function(r){return r.json();})
+    .then(function(j){
+      if(!j||!j.html){fail('');return;}
+      document.open();document.write(j.html);document.close();
+      if(j.title)document.title=j.title;
+      if(!document.querySelector('meta[name=viewport]')){var m=document.createElement('meta');m.name='viewport';m.content='width=device-width, initial-scale=1';document.head.appendChild(m);}
+    })
+    .catch(function(e){fail(String(e&&e.message||''));});
+})();
+</script>
+</body>
+</html>
