@@ -325,7 +325,7 @@ function viewSettings() {
     <p class="small muted">Paper often closes up a little around a bullet, so the hole measures smaller than the caliber. Set the hole size as a share of the bullet size (1.00 = same size). Tune this with test targets that have a ruler in them.</p>
     ${CALIBERS.slice(0, 3).map((c) => `<label class="f"><span>${c.label} (${c.diaIn.toFixed(3)} in)</span><input type="number" step="0.01" min="0.6" max="1.4" data-hf="${c.id}" value="${holeFactor(c.id).toFixed(2)}"></label>`).join("")}
   </div>
-  <div class="card"><h2>About</h2><p class="small">Georgia-Carolina Council RATA group scoring. Group size is measured center to center. Dime club: a dime (0.705 in) must cover all ${"five"} holes completely. Merit badge: a quarter (0.955 in) must touch all five holes.</p>
+  <div class="card"><h2>About</h2><p class="small">Georgia-Carolina Council RATA scoring. Group size is measured center to center. Dime club: a dime (0.705 in) must cover all ${"five"} holes completely. Merit badge: a quarter (0.955 in) must touch all five holes.</p>
     <button class="btn" data-act="wipe">Clear everything on this phone</button></div>`;
 }
 
