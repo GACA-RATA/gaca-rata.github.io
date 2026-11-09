@@ -1,5 +1,5 @@
 // Keeps the app working with no signal once it has been opened once.
-const VERSION = "rata-scoring-3";
+const VERSION = "rata-scoring-4";
 const SHELL = ["./", "index.html", "styles.css", "config.js", "app.js", "store.js", "engine.js", "worker.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 const LIBS = [
   "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
@@ -10,7 +10,7 @@ const LIBS = [
 self.addEventListener("install", (e) => {
   e.waitUntil((async () => {
     const c = await caches.open(VERSION);
-    await c.addAll(SHELL);
+    await c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" })));
     await Promise.all(LIBS.map((u) => c.add(u).catch(() => {})));
     self.skipWaiting();
   })());
@@ -30,7 +30,8 @@ self.addEventListener("fetch", (e) => {
   e.respondWith((async () => {
     const c = await caches.open(VERSION);
     try {
-      const fresh = await fetch(req);
+      // same-site files: always ask the site for the latest copy instead of a stale browser copy
+      const fresh = await fetch(req, url.origin === location.origin ? { cache: "no-cache" } : undefined);
       if (fresh.ok && (url.origin === location.origin || url.hostname === "cdnjs.cloudflare.com")) c.put(req, fresh.clone());
       return fresh;
     } catch {
