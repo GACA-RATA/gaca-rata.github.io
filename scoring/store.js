@@ -125,7 +125,11 @@ export function standings(eventId) {
   const disciplines = (ev.disciplines || []).filter((d) => d.on);
   const out = { disciplines: [], patrols: [] };
   const patrolMap = new Map();
+  // shooters with neither a patrol nor a troop are ranked as individuals only
+  const noTeam = (p) => !(p.patrol || "").trim() && !(p.troop || "").trim();
+  out.unassigned = people.filter(noTeam);
   for (const p of people) {
+    if (noTeam(p)) continue;
     const k = teamKey(p);
     if (!patrolMap.has(k)) patrolMap.set(k, { key: k, troop: p.troop, patrol: p.patrol, label: team(p), members: 0, by: {} });
     patrolMap.get(k).members++;
@@ -144,6 +148,7 @@ export function standings(eventId) {
     // patrol average for this discipline
     const pat = new Map();
     for (const r of indiv) {
+      if (noTeam(r.person)) continue;
       const k = teamKey(r.person);
       if (!pat.has(k)) pat.set(k, []);
       pat.get(k).push(r.value);

@@ -8,6 +8,9 @@ const fmt = (v, d = 3) => (v == null || !isFinite(v) ? "–" : Number(v).toFixed
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 St.load();
+// A shared event link (?event=…) opens the app on that event.
+const linkEvent = new URLSearchParams(location.search).get("event");
+if (linkEvent) { try { St.setSetting("pendingEvent", linkEvent); history.replaceState(null, "", location.pathname); } catch {} }
 const cfg = window.RATA_CONFIG || {};
 if (cfg.syncUrl && !St.settings().syncUrl) St.setSetting("syncUrl", cfg.syncUrl);
 
@@ -38,7 +41,23 @@ function toast(msg) {
   clearTimeout(toast.t);
   toast.t = setTimeout(() => t.classList.remove("show"), 2600);
 }
+const eventLink = (ev) => `${location.origin}${location.pathname}?event=${encodeURIComponent(ev.id)}`;
 const activeEvent = () => St.data().events[St.settings().activeEvent] || null;
+// New phones start on today's event (or the most recent one) instead of an empty screen.
+function ensureEvent() {
+  const want = St.settings().pendingEvent;
+  if (want && St.data().events[want] && !St.data().events[want].deleted) {
+    St.setSetting("activeEvent", want); St.setSetting("pendingEvent", null);
+    if (S.tab === "events" && !S.editEvent) S.tab = "score";
+    return;
+  }
+  const cur = activeEvent();
+  if (cur && !cur.deleted) return;
+  const evs = St.listEvents();
+  if (!evs.length) return;
+  const today = new Date().toLocaleDateString("en-CA");
+  St.setSetting("activeEvent", (evs.find((e) => e.date === today) || evs[0]).id);
+}
 function disciplinesOn(ev) { return (ev?.disciplines || []).filter((d) => d.on); }
 function currentDiscipline() {
   const ev = activeEvent();
@@ -48,7 +67,8 @@ function currentDiscipline() {
   return d;
 }
 function caliberOf(id) { return CALIBERS.find((c) => c.id === id) || CALIBERS[0]; }
-function holeFactor(id) { const f = Number(St.settings().holeFactor?.[id]); return f > 0.5 && f < 1.5 ? f : 1; }
+// Hole size correction comes from the site (config.js) so every phone measures the same.
+function holeFactor(id) { const f = Number(cfg.holeFactor?.[id]); return f > 0.5 && f < 1.5 ? f : 1; }
 function sheetChoice() {
   const s = St.settings().sheet || { id: "letter" };
   if (s.id === "custom") return { id: "custom", w: Number(s.w) || 0, h: Number(s.h) || 0 };
@@ -82,6 +102,7 @@ function renderTabs() {
 // ------------------------------------------------------------------ render
 
 function render() {
+  ensureEvent();
   renderTabs();
   renderSync();
   const v = $("#view");
@@ -117,7 +138,7 @@ function viewEvents() {
     ${act && act.id === e.id ? '<span class="chip on">Current</span>' : `<button class="btn slim" data-act="useEvent" data-id="${e.id}">Use</button>`}
     <button class="btn slim" data-act="editEvent" data-id="${e.id}">Edit</button></li>`).join("") || '<li class="muted">No events yet.</li>'}</ul>
     <div class="btns" style="margin-top:10px"><button class="btn primary" data-act="newEvent">New event</button></div></div>`;
-  if (act) h += viewRoster(act);
+  if (act) h += viewRoster(act) + viewShare(act);
   return h;
 }
 
@@ -150,6 +171,19 @@ function viewEventForm(ev) {
   <div class="btns"><button class="btn primary big" data-act="saveEvent">Save event</button><button class="btn big" data-act="cancelEvent">Cancel</button></div>`;
 }
 
+function viewShare(ev) {
+  return `<div class="card"><h2>Bring other instructors in</h2>
+    <p class="small muted">They scan this code or open the link, and the app opens on this event. Print it for the range table.</p>
+    <div id="qrBox" style="display:flex;justify-content:center;padding:10px;background:#fff"></div>
+    <p class="small" style="word-break:break-all;text-align:center"><span id="evLink">${esc(eventLink(ev))}</span></p>
+    <div class="btns" style="justify-content:center"><button class="btn slim" data-act="copyLink">Copy link</button></div>
+  </div>
+  <div class="card ${ev.locked ? "soft" : ""}"><h2>${ev.locked ? "Scoring is locked" : "Final results"}</h2>
+    <p class="small muted">${ev.locked ? "Scores for this event can't be added, changed or deleted on any phone. Unlock only if a score has to be fixed." : "When scoring is done, lock the event so nothing changes after results are printed. It locks on every phone after they sync."}</p>
+    <button class="btn ${ev.locked ? "" : "dark"}" data-act="toggleLock">${ev.locked ? "Unlock scoring" : "Lock scoring"}</button>
+  </div>`;
+}
+
 function viewRoster(ev) {
   const people = St.roster(ev.id);
   const groups = new Map();
@@ -176,9 +210,12 @@ function viewRoster(ev) {
 function viewScore() {
   const ev = activeEvent();
   if (!ev) return `<h1>Score</h1><div class="card soft"><p>Pick or make an event first.</p><button class="btn primary" data-tab="events">Go to Events</button></div>`;
+  if (ev.locked) return `<h1>${esc(ev.name)}</h1><div class="card soft"><h2>Scoring is locked</h2><p>This event's results are final. Scores can't be added or changed.</p><div class="btns"><button class="btn primary" data-tab="results">See results</button><button class="btn" data-tab="events">Events</button></div></div>`;
   const d = currentDiscipline();
   if (!d) return `<h1>${esc(ev.name)}</h1><div class="card soft"><p>This event has nothing turned on to score.</p><button class="btn" data-act="editEvent" data-id="${ev.id}">Edit event</button></div>`;
-  let h = `<h1>${esc(ev.name)}</h1>
+  let h = `${!St.settings().instructor ? `<div class="card soft"><h2>Who's scoring?</h2><p class="small muted">Your name goes on the scores you enter, so questions come to the right person.</p>
+      <div class="row"><input type="text" id="firstName" placeholder="First name and last initial" autocomplete="name"><button class="btn primary" data-act="saveName" style="flex:0 0 auto">Save</button></div></div>` : ""}
+    <h1>${esc(ev.name)}</h1>
     <div class="chips">${disciplinesOn(ev).map((x) => `<button class="chip ${x.id === d.id ? "on" : ""}" data-act="pickDisc" data-id="${x.id}">${esc(x.name)}</button>`).join("")}</div>`;
   h += viewShooterPick(ev);
   h += d.kind === "group" ? viewGroupScoring(ev, d) : viewPointsScoring(ev, d);
@@ -228,7 +265,7 @@ function viewGroupScoring(ev, d) {
   if (a.busy) return h + `<div class="card"><div class="spinner"></div><p style="text-align:center">Measuring…</p></div>`;
   if (a.error) return h + `<div class="card"><div class="note warn">${esc(a.error)}</div><button class="btn" data-act="newPhoto">Try another photo</button></div>`;
   if (a.mode === "corners") return h + `<div class="card"><h2>Mark the corners</h2><p class="small muted">Drag the four red dots onto the corners of the target sheet.</p>
-      <div class="canvasWrap"><canvas id="cornerCv"></canvas></div>
+      <div class="canvasWrap editing"><canvas id="cornerCv"></canvas></div>
       <div class="tools"><button class="btn primary" data-act="applyCorners">Use these corners</button><button class="btn" data-act="cancelCorners">Cancel</button></div></div>`;
   const r = a.res;
   h += (r.warnings || []).map((w) => `<div class="note warn">${esc(w)}</div>`).join("");
@@ -242,34 +279,48 @@ function viewGroupScoring(ev, d) {
       <div class="tools">${r.ppi ? '<button class="btn" data-act="cancelScale">Cancel</button>' : ""}<button class="btn" data-act="newPhoto">New photo</button></div></div>`;
   }
 
+  const N = ev.shotsPerGroup || 5;
   const g = a.groups[a.sel];
   const m = g && g.shots.length ? measureGroup(g.shots, r.ppi, r.holeIn) : null;
   a.m = m;
-  const N = ev.shotsPerGroup || 5;
+  const is22 = a.calId === "22lr";
   const close = (x) => Math.abs(x) < 0.02;
   const marg = (x) => (x >= 0 ? `${fmt(x, 2)} in to spare` : `over by ${fmt(-x, 2)} in`);
   const srcText = r.scaleSource === "holes" ? `Scale from ${r.singles} clean ${esc(caliberOf(a.calId).label)} hole${r.singles === 1 ? "" : "s"}`
     : r.scaleSource === "sheet" ? "Scale from the sheet size (no clean single hole)" : "Scale set by hand";
-  h += `<div class="card">
-    <div class="groupTabs">${a.groups.map((x, i) => `<button class="chip ${i === a.sel ? "on" : ""}" data-act="pickGroup" data-i="${i}">Group ${LETTERS[i] || i + 1} · ${x.shots.length}${x.savedFor ? " ✓" : ""}</button>`).join("")}
+  const L = (x) => LETTERS[a.groups.indexOf(x)] || String(a.groups.indexOf(x) + 1);
+  const scored = a.groups.filter((x) => x.shots.length);
+  const off = scored.filter((x) => x.shots.length !== N);
+  const pid = S.personId, pName = pid ? St.display(person(pid)) : "";
+  const savedHere = !!(g && pid && (g.savedIds || []).includes(pid));
+  const unsaved = pid ? scored.filter((x) => !(x.savedIds || []).includes(pid)) : [];
+  h += `<div class="card"><h2>Found on this sheet</h2>
+    <p class="small muted">Each bullseye is its own group. Tap a group to check it.</p>
+    <div class="groupTabs">${a.groups.map((x, i) => { const n = x.shots.length, bad = n && n !== N; return `<button class="chip ${i === a.sel ? "on" : ""} ${bad ? "warnchip" : ""}" data-act="pickGroup" data-i="${i}">Group ${L(x)} · ${n} of ${N}${x.savedFor ? " ✓" : ""}</button>`; }).join("")}
       <button class="chip" data-act="newGroup">+ Group</button></div>
-    ${g?.note ? `<div class="note warn" style="margin-top:10px">${esc(g.note)}</div>` : ""}
-    <div class="canvasWrap" style="margin-top:10px"><canvas id="groupCv"></canvas></div>
-    <p class="small muted" style="margin:6px 0 0">Drag a marker to move it. Tap an empty spot to add a shot. Yellow rings are true hole size; the gray rings are a quarter and a dime.</p>
+    ${off.length ? `<div class="note warn" style="margin-top:10px"><b>${off.length === 1 ? "1 group doesn't" : off.length + " groups don't"} have ${N} shots.</b> ${off.map((x) => `Group ${L(x)} has ${x.shots.length}`).join(", ")}. A hole may be hidden in a torn group, or a mark was counted as a hole. Tap <b>Fix markers</b> to correct it.</div>`
+      : scored.length ? `<div class="note info" style="margin-top:10px">Every group has ${N} shots.</div>` : ""}
+  </div>
+  <div class="card"><h2>Group ${g ? L(g) : ""}</h2>
+    <div class="canvasWrap ${a.edit ? "editing" : ""}"><canvas id="groupCv"></canvas></div>
+    <p class="small muted" style="margin:6px 0 0">${a.edit ? "<b>Fixing:</b> drag a marker to move it, tap an empty spot to add a shot, or tap a marker and press Remove." : "Yellow rings are the holes it found, at true size." + (is22 ? " The gray rings are a quarter and a dime." : "")}</p>
     <div class="tools">
-      <button class="btn slim" data-act="delShot" ${a.selShot == null ? "disabled" : ""}>Remove marker</button>
-      <button class="btn slim" data-act="undo" ${a.hist.length ? "" : "disabled"}>Undo</button>
+      <button class="btn slim ${a.edit ? "dark" : ""}" data-act="toggleEdit">${a.edit ? "Done fixing" : "Fix markers"}</button>
+      ${a.edit ? `<button class="btn slim" data-act="delShot" ${a.selShot == null ? "disabled" : ""}>Remove marker</button><button class="btn slim" data-act="undo" ${a.hist.length ? "" : "disabled"}>Undo</button>` : ""}
       <button class="btn slim" data-act="fitView">Re-center</button>
     </div>
     ${m ? `<div><span class="muted small">Group size, center to center</span><div><span class="big-number">${fmt(m.spreadIn)}</span> <span class="unit">in</span></div>
       <div class="small muted">Outside edges ${fmt(m.outsideIn)} in · <b style="color:${m.n === N ? "inherit" : "var(--warn)"}">${m.n} of ${N} shots</b></div></div>
-      <div class="verdicts">
+      ${is22 ? `<div class="verdicts">
         <div class="verdict ${m.dime.pass ? "pass" : "fail"} ${close(m.dime.marginIn) ? "close" : ""}"><span class="small">Dime club</span><b>${m.dime.pass ? "Covered" : "Not covered"}</b><span class="small">${marg(m.dime.marginIn)}</span></div>
         <div class="verdict ${m.quarter.pass ? "pass" : "fail"} ${close(m.quarter.marginIn) ? "close" : ""}"><span class="small">Merit badge quarter</span><b>${m.quarter.pass ? "Touches all" : "Misses a hole"}</b><span class="small">${marg(m.quarter.marginIn)}</span></div>
       </div>
-      ${close(m.dime.marginIn) || close(m.quarter.marginIn) ? '<div class="note warn" style="margin-top:10px">Too close to call from a photo. Check it with a real coin.</div>' : ""}` : '<p class="muted">No shots in this group yet. Tap the holes to add them.</p>'}
+      ${close(m.dime.marginIn) || close(m.quarter.marginIn) ? '<div class="note warn" style="margin-top:10px">Too close to call from a photo. Check it with a real coin.</div>' : ""}` : ""}` : '<p class="muted">No shots in this group yet. Tap <b>Fix markers</b>, then tap the holes to add them.</p>'}
     <p class="small muted" style="margin-top:10px">${srcText} · ${fmt(r.ppi, 0)} px per inch</p>
-    <button class="btn primary big block" data-act="saveGroup" ${S.personId && m ? "" : "disabled"}>${!S.personId ? "Pick a shooter to save" : g?.savedFor ? "Saved for " + esc(g.savedFor) + " · save again" : "Save for " + esc(St.display(person(S.personId)))}</button>
+    <div style="display:grid;gap:8px">
+      <button class="btn primary big block" data-act="saveGroup" ${pid && m && !savedHere ? "" : "disabled"}>${!pid ? "Pick a shooter to save" : savedHere ? "Saved for " + esc(pName) + " ✓" : `Save group ${L(g)} for ` + esc(pName)}</button>
+      ${pid && scored.length > 1 && unsaved.length > 1 ? `<button class="btn dark block" data-act="saveAll">Save all ${unsaved.length} groups for ${esc(pName)}</button>` : ""}
+    </div>
   </div>
   <div class="card"><h2>Whole sheet</h2><p class="small muted">Tap a group to work on it.</p><div class="canvasWrap"><canvas id="overCv"></canvas></div>
     <div class="tools"><button class="btn slim" data-act="cornerMode">Fix corners</button><button class="btn slim" data-act="scaleMode">Set scale by hand</button><button class="btn slim" data-act="rerun">Measure again</button><button class="btn slim dark" data-act="newPhoto">New photo</button></div></div>`;
@@ -293,7 +344,8 @@ function viewResults() {
   if (!ev) return `<h1>Results</h1><div class="card soft"><p>Pick an event first.</p><button class="btn primary" data-tab="events">Go to Events</button></div>`;
   const st = St.standings(ev.id);
   const ds = st.disciplines.map((x) => x.discipline);
-  let h = `<h1>${esc(ev.name)} results</h1>
+  let h = `<h1>${esc(ev.name)} results${ev.locked ? ' <span class="chip on" style="vertical-align:middle;font-size:13px">Final</span>' : ""}</h1>
+    ${st.unassigned.length ? `<div class="note warn">${st.unassigned.length === 1 ? "1 shooter has" : st.unassigned.length + " shooters have"} no patrol or troop, so ${st.unassigned.length === 1 ? "isn't" : "aren't"} in the patrol rankings: ${st.unassigned.map((p) => esc(St.display(p))).join(", ").replace(/\.$/, "")}. Fix it on the Events tab.</div>` : ""}
     ${cfg.preview ? '<div class="note info">This is the preview copy. The Excel and PDF buttons and shared scores work once the app is on its own web address.</div>' : ""}
     <div class="btns" style="margin-bottom:14px"><button class="btn primary" data-act="xlsx">Excel file</button><button class="btn primary" data-act="pdf">PDF to print</button><button class="btn" data-act="syncNow">Sync now</button></div>
     <div class="card"><h2>Patrols</h2><p class="small muted">Each event is out of 100: the best patrol gets 100, others get their share. Patrol score is the average of its shooters.</p>
@@ -322,8 +374,8 @@ function viewSettings() {
     <p class="small muted">${s.syncUrl ? (St.data().lastSync ? "Last synced " + new Date(St.data().lastSync).toLocaleString() : "Not synced yet") : "Not set up. Scores stay on this phone."}</p>
   </div>
   <div class="card"><h2>Hole size correction</h2>
-    <p class="small muted">Paper often closes up a little around a bullet, so the hole measures smaller than the caliber. Set the hole size as a share of the bullet size (1.00 = same size). Tune this with test targets that have a ruler in them.</p>
-    ${CALIBERS.slice(0, 3).map((c) => `<label class="f"><span>${c.label} (${c.diaIn.toFixed(3)} in)</span><input type="number" step="0.01" min="0.6" max="1.4" data-hf="${c.id}" value="${holeFactor(c.id).toFixed(2)}"></label>`).join("")}
+    <p class="small muted">Paper often closes up a little around a bullet, so the hole measures smaller than the caliber. These values are set on the site so every phone measures the same way. 1.00 means the hole is the bullet's size.</p>
+    <ul class="list">${CALIBERS.slice(0, 3).map((c) => `<li><div class="grow">${c.label}</div><b>${holeFactor(c.id).toFixed(2)}</b></li>`).join("")}</ul>
   </div>
   <div class="card"><h2>About</h2><p class="small">Georgia-Carolina Council RATA scoring. Group size is measured center to center. Dime club: a dime (0.705 in) must cover all ${"five"} holes completely. Merit badge: a quarter (0.955 in) must touch all five holes.</p>
     <button class="btn" data-act="wipe">Clear everything on this phone</button></div>`;
@@ -349,6 +401,16 @@ function afterRender() {
     d[k] = el.type === "checkbox" ? el.checked : k === "max" ? Number(el.value) || 0 : el.value;
   }));
   if (S.a && !S.a.busy) drawCanvases();
+  const qb = $("#qrBox");
+  if (qb) drawQr(qb, $("#evLink").textContent);
+}
+
+async function drawQr(box, text) {
+  try {
+    if (!window.QRCode) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js");
+    box.innerHTML = "";
+    new window.QRCode(box, { text, width: 200, height: 200, correctLevel: window.QRCode.CorrectLevel.M });
+  } catch { box.innerHTML = '<span class="small muted">The QR code needs signal the first time. The link below works either way.</span>'; }
 }
 
 // ------------------------------------------------------------------ photo and measuring
@@ -540,6 +602,7 @@ function drawGroup(cv) {
   // touch: drag a marker, tap empty to add
   let drag = null;
   const toRect = (e) => { const b = cv.getBoundingClientRect(); return { x: c.x + ((e.clientX - b.left) / b.width) * c.s, y: c.y + ((e.clientY - b.top) / b.height) * c.s }; };
+  if (!a.edit) { cv.onpointerdown = cv.onpointermove = cv.onpointerup = null; return; }
   cv.onpointerdown = (e) => {
     cv.setPointerCapture(e.pointerId);
     const p = toRect(e);
@@ -598,6 +661,27 @@ function drawCorners(cv) {
   cv.onpointerup = () => { drag = -1; };
 }
 
+function findDup(eventId, p) {
+  const norm = (x) => String(x || "").trim().toLowerCase().replace(/^troop\s*/, "");
+  return St.roster(eventId).find((q) => norm(q.name) === norm(p.name) && norm(q.patrol) === norm(p.patrol) && norm(q.troop) === norm(p.troop));
+}
+
+function storeGroup(g, pid) {
+  const a = S.a, r = a.res, ev = activeEvent(), d = currentDiscipline();
+  const m = measureGroup(g.shots, r.ppi, r.holeIn);
+  const is22 = a.calId === "22lr";
+  St.saveScore({
+    eventId: ev.id, personId: pid, disciplineId: d.id, disciplineName: d.name, kind: "group",
+    value: Math.round(m.spreadIn * 1000) / 1000, spreadIn: m.spreadIn, outsideIn: m.outsideIn, shots: m.n,
+    dime: is22 ? m.dime.pass : null, quarter: is22 ? m.quarter.pass : null,
+    dimeMarginIn: is22 ? m.dime.marginIn : null, quarterMarginIn: is22 ? m.quarter.marginIn : null,
+    caliber: caliberOf(a.calId).label, scaleSource: r.scaleSource, ppi: r.ppi,
+  });
+  g.savedIds = (g.savedIds || []).concat(pid);
+  g.savedFor = St.display(person(pid));
+  return m;
+}
+
 // ------------------------------------------------------------------ actions
 
 const actions = {
@@ -622,6 +706,8 @@ const actions = {
     const ev = activeEvent();
     const name = St.tidyName($("#pName").value), patrol = $("#pPatrol").value.trim(), troop = $("#pTroop").value.trim();
     if (!name && !patrol) return toast("Enter a name or a patrol.");
+    const dup = findDup(ev.id, { name, patrol, troop });
+    if (dup) return toast(`${St.display(dup)} (${St.team(dup)}) is already on the list.`);
     St.savePerson({ eventId: ev.id, name, patrol, troop });
     render();
     $("#pPatrol").value = patrol; $("#pTroop").value = troop; $("#pName").focus();
@@ -631,15 +717,17 @@ const actions = {
   importPaste: () => {
     const ev = activeEvent();
     const rows = St.parseRoster($("#pasteBox").value);
-    rows.forEach((r) => St.savePerson({ eventId: ev.id, ...r }));
+    let added = 0, skipped = 0;
+    rows.forEach((r) => { if (findDup(ev.id, r)) skipped++; else { St.savePerson({ eventId: ev.id, ...r }); added++; } });
     S.pasteOpen = false;
-    toast(`Added ${rows.length}`);
+    toast(`Added ${added}${skipped ? `, skipped ${skipped} already on the list` : ""}`);
     render(); doSyncSoon();
   },
   delPerson: (el) => { if (!confirmTap(el, "Remove?")) return; St.deletePerson(el.dataset.id); render(); doSyncSoon(); },
   pickDisc: (el) => { S.disciplineId = el.dataset.id; S.caliberId = null; S.a = null; render(); },
   pickPerson: (el) => { S.personId = el.dataset.id; render(); },
   savePoints: () => {
+    if (activeEvent()?.locked) return toast("Scoring is locked for this event.");
     const d = currentDiscipline(), ev = activeEvent();
     const v = Number($("#pts").value);
     if ($("#pts").value === "" || !isFinite(v) || v < 0) return toast("Enter the score.");
@@ -650,22 +738,43 @@ const actions = {
     render(); doSyncSoon();
   },
   pickGroup: (el) => { S.a.sel = +el.dataset.i; S.a.selShot = null; S.a.crop = null; render(); },
-  newGroup: () => { const a = S.a; a.hist.push(JSON.stringify(a.groups)); a.groups.push({ shots: [] }); a.sel = a.groups.length - 1; a.selShot = null; render(); },
+  newGroup: () => { const a = S.a; a.hist.push(JSON.stringify(a.groups)); a.groups.push({ shots: [] }); a.sel = a.groups.length - 1; a.selShot = null; a.crop = null; a.edit = true; render(); },
   delShot: () => { const a = S.a, g = a.groups[a.sel]; if (a.selShot == null) return; a.hist.push(JSON.stringify(a.groups)); g.shots.splice(a.selShot, 1); a.selShot = null; render(); },
   undo: () => { const a = S.a; if (!a.hist.length) return; a.groups = JSON.parse(a.hist.pop()); a.selShot = null; render(); },
   fitView: () => { S.a.crop = null; render(); },
-  saveGroup: () => {
-    const a = S.a, r = a.res, ev = activeEvent(), d = currentDiscipline();
-    const g = a.groups[a.sel], m = measureGroup(g.shots, r.ppi, r.holeIn);
-    const p = person(S.personId);
-    St.saveScore({
-      eventId: ev.id, personId: p.id, disciplineId: d.id, disciplineName: d.name, kind: "group",
-      value: Math.round(m.spreadIn * 1000) / 1000, spreadIn: m.spreadIn, outsideIn: m.outsideIn, shots: m.n,
-      dime: m.dime.pass, quarter: m.quarter.pass, dimeMarginIn: m.dime.marginIn, quarterMarginIn: m.quarter.marginIn,
-      caliber: caliberOf(a.calId).label, scaleSource: r.scaleSource, ppi: r.ppi,
-    });
-    g.savedFor = St.display(p);
-    toast(`Saved ${fmt(m.spreadIn)} in for ${St.display(p)}`);
+  copyLink: async () => {
+    const t = $("#evLink").textContent;
+    try { await navigator.clipboard.writeText(t); toast("Link copied"); }
+    catch { const r = document.createRange(); r.selectNodeContents($("#evLink")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast("Link selected. Copy it from the menu."); }
+  },
+  toggleLock: (el) => {
+    const ev = activeEvent();
+    if (!ev.locked && !confirmTap(el, "Tap again to lock")) return;
+    St.saveEvent({ ...ev, locked: !ev.locked });
+    toast(ev.locked ? "Scoring unlocked" : "Scoring locked");
+    render(); doSyncSoon();
+  },
+  saveName: () => { const v = St.tidyName($("#firstName").value) || $("#firstName").value.trim(); if (!v) return toast("Enter your name."); St.setSetting("instructor", v); toast(`Thanks, ${v}`); render(); },
+  toggleEdit: () => { S.a.edit = !S.a.edit; S.a.selShot = null; render(); },
+  saveAll: (el) => {
+    if (activeEvent()?.locked) return toast("Scoring is locked for this event.");
+    const a = S.a, N = activeEvent().shotsPerGroup || 5, pid = S.personId;
+    const todo = a.groups.filter((x) => x.shots.length && !(x.savedIds || []).includes(pid));
+    const off = todo.filter((x) => x.shots.length !== N).length;
+    if (off && !confirmTap(el, `${off === 1 ? "1 group doesn't" : off + " groups don't"} have ${N} shots. Tap again to save all`)) return;
+    const name = St.display(person(pid));
+    todo.forEach((g) => storeGroup(g, pid));
+    toast(`Saved ${todo.length} groups for ${name}`);
+    S.personId = null; S.search = "";
+    render(); doSyncSoon();
+  },
+  saveGroup: (el) => {
+    if (activeEvent()?.locked) return toast("Scoring is locked for this event.");
+    const a = S.a, N = activeEvent().shotsPerGroup || 5, g = a.groups[a.sel], pid = S.personId;
+    if ((g.savedIds || []).includes(pid)) return toast("This group is already saved for this shooter.");
+    if (g.shots.length !== N && !confirmTap(el, `Only ${g.shots.length} of ${N} shots. Tap again to save`)) return;
+    const m = storeGroup(g, pid);
+    toast(`Saved ${fmt(m.spreadIn)} in for ${St.display(person(pid))}`);
     S.personId = null; S.search = "";
     render(); doSyncSoon();
   },
@@ -682,7 +791,8 @@ const actions = {
     const [p, q] = a.scalePts;
     rerun({ forcePpi: Math.hypot(p.x - q.x, p.y - q.y) / dIn });
   },
-  delScore: (el) => { if (!confirmTap(el, "Delete?")) return; St.deleteScore(el.dataset.id); render(); doSyncSoon(); },
+  delScore: (el) => {
+    if (activeEvent()?.locked) return toast("Scoring is locked for this event."); if (!confirmTap(el, "Delete?")) return; St.deleteScore(el.dataset.id); render(); doSyncSoon(); },
   syncNow: () => doSync(true),
   xlsx: () => exportXlsx(),
   pdf: () => exportPdf(),
@@ -709,7 +819,7 @@ async function doSync(loud) {
   S.syncState = r.ok ? "ok" : r.reason === "offline" ? "offline" : "error";
   renderSync();
   if (loud) toast(r.ok ? `Synced · sent ${r.sent}, got ${r.received}` : r.reason === "offline" ? "No signal. Scores are safe on this phone and will send later." : "The sheet didn't answer: " + r.reason);
-  if (r.ok && r.received && !(S.tab === "score" && S.a)) render();
+  if (r.ok && r.received && !(S.tab === "score" && S.a)) { if (S.tab === "events" && !activeEvent() && St.listEvents().length) S.tab = "score"; render(); }
 }
 window.addEventListener("online", () => doSync());
 setInterval(() => { if (St.pendingCount() || S.tab === "results") doSync(); }, 60000);

@@ -1,10 +1,11 @@
 // Keeps the app working with no signal once it has been opened once.
-const VERSION = "rata-scoring-4";
+const VERSION = "rata-scoring-5";
 const SHELL = ["./", "index.html", "styles.css", "config.js", "app.js", "store.js", "engine.js", "worker.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 const LIBS = [
   "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js",
+  "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js",
 ];
 
 self.addEventListener("install", (e) => {
