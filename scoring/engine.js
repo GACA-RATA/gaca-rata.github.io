@@ -615,22 +615,37 @@ export function analyze(img, opts) {
   const singleArea = Math.PI * rPx * rPx;
   const maxBlob = singleArea * 40;
   const holes = det.blobs.filter((b) => b.area > singleArea * 0.3 && b.area < maxBlob);
-  // group holes that sit within 1.25" of each other (edge to edge)
+  // Sort holes into groups. On sheets with several printed bullseyes (A-17,
+  // A-32, dot sheets) each hole goes with the bullseye it is nearest, the way
+  // an instructor scores by eye. Holes far from any bullseye, and sheets with
+  // fewer than two bullseyes, fall back to grouping holes that sit close together.
+  const bulls = findBulls(rect, colors, ppi, det.mask);
+  const byRoot = new Map();
+  const loose = [];
+  if (bulls.length >= 2) {
+    for (const b of holes) {
+      let bi = -1, bd = Infinity;
+      bulls.forEach((u, i) => { const d = Math.hypot(b.cx - u.x, b.cy - u.y); if (d < bd) { bd = d; bi = i; } });
+      const reach = Math.max(bulls[bi].r * 1.6, bulls[bi].r + 1.0 * ppi);
+      if (bd <= reach) { const key = "bull" + bi; if (!byRoot.has(key)) byRoot.set(key, []); byRoot.get(key).push(b); }
+      else loose.push(b);
+    }
+  } else loose.push(...holes);
+  // leftover holes: group those within 1.25" of each other (edge to edge)
   const gap = 1.25 * ppi;
-  const parent = holes.map((_, i) => i);
+  const parent = loose.map((_, i) => i);
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  for (let i = 0; i < holes.length; i++)
-    for (let j = i + 1; j < holes.length; j++) {
-      const a = holes[i], b = holes[j];
+  for (let i = 0; i < loose.length; i++)
+    for (let j = i + 1; j < loose.length; j++) {
+      const a = loose[i], b = loose[j];
       const dx = Math.max(0, Math.max(a.minX, b.minX) - Math.min(a.maxX, b.maxX));
       const dy = Math.max(0, Math.max(a.minY, b.minY) - Math.min(a.maxY, b.maxY));
       if (Math.hypot(dx, dy) < gap) parent[find(i)] = find(j);
     }
-  const byRoot = new Map();
-  holes.forEach((b, i) => { const r = find(i); if (!byRoot.has(r)) byRoot.set(r, []); byRoot.get(r).push(b); });
+  loose.forEach((b, i) => { const r = "loose" + find(i); if (!byRoot.has(r)) byRoot.set(r, []); byRoot.get(r).push(b); });
 
   const groups = [];
-  for (const members of byRoot.values()) {
+  for (const [key, members] of byRoot.entries()) {
     // how many shots in each hole: at least one each, the rest go where the
     // torn area is biggest compared with the shots already given to it
     const k = members.map(() => 1);
@@ -641,7 +656,8 @@ export function analyze(img, opts) {
     const room = want - total;
     for (let t = 0; t < room; t++) {
       let bi = -1, bv = -Infinity;
-      members.forEach((b, i) => { const v = est[i] / k[i]; if (v > bv && est[i] > 1.25 && est[i] > k[i] * 0.45) { bv = v; bi = i; } });
+      // a group short of its shots: a hole that is too big, or stretched out of round, hides another shot
+      members.forEach((b, i) => { const v = est[i] / k[i]; const torn = est[i] > 1.25 || (est[i] > 1.08 && b.ratio < 0.8); if (v > bv && torn && est[i] > k[i] * 0.45) { bv = v; bi = i; } });
       if (bi < 0) break;
       k[bi]++; total++;
     }
@@ -650,17 +666,65 @@ export function analyze(img, opts) {
       if (k[i] === 1 && b.ratio > 0.7) shots.push({ x: b.cx, y: b.cy, auto: true });
       else for (const c of fitCircles(b, k[i], rPx, det.w)) shots.push({ x: c[0], y: c[1], auto: true });
     });
-    groups.push({ shots, holes: members.length, likelyShots: total });
+    const bull = key.startsWith("bull") ? bulls[+key.slice(4)] : null;
+    groups.push({ shots, holes: members.length, likelyShots: total, bull: bull ? { x: bull.x, y: bull.y, r: bull.r } : null });
   }
-  // biggest groups first (most shots), then top-to-bottom
-  groups.sort((a, b) => b.shots.length - a.shots.length || a.shots[0].y - b.shots[0].y);
+  // reading order: top to bottom, left to right (rows within half an inch count as one row)
+  const at = (g) => (g.bull ? [g.bull.x, g.bull.y] : [g.shots.reduce((t, p) => t + p.x, 0) / g.shots.length, g.shots.reduce((t, p) => t + p.y, 0) / g.shots.length]);
+  groups.sort((a, b) => { const [ax, ay] = at(a), [bx, by] = at(b); return Math.abs(ay - by) > 0.5 * ppi ? ay - by : ax - bx; });
   for (const g of groups) if (g.shots.length !== perGroup && g.shots.length > 1)
     g.note = `Found ${g.shots.length} shots here, expected ${perGroup}. Check the markers.`;
 
   return {
     ok: true, stage: "done", rect, corners, colors, warnings, groups, ppi, scaleSource,
-    holePpi, sheetPpi, holeIn, singles: singles.length, rPx,
+    holePpi, sheetPpi, holeIn, singles: singles.length, rPx, bulls: bulls.length,
   };
+}
+
+// Printed bullseyes: round dark marks (solid black centers or ring sets)
+// between 0.3" and 4" across. Holes inside the black count as part of it, and
+// rings that share a center are treated as one bullseye.
+function findBulls(rect, colors, ppi, holeMask) {
+  const { width: w, height: h, data } = rect;
+  const yDark = colors.paper[0] * 0.5;
+  const mask = new Uint8Array(w * h);
+  for (let i = 0, q = 0; i < w * h; i++, q += 4) {
+    const y = 0.299 * data[q] + 0.587 * data[q + 1] + 0.114 * data[q + 2];
+    if (y < yDark) mask[i] = 2; // printed ink
+    else if (holeMask[i]) mask[i] = 1; // a hole inside the print
+  }
+  const label = new Int32Array(w * h).fill(-1);
+  const stack = new Int32Array(w * h);
+  const cands = [];
+  for (let i = 0; i < w * h; i++) {
+    if (!mask[i] || label[i] !== -1) continue;
+    let sp = 0, n = 0, ink = 0, sx = 0, sy = 0, minX = w, maxX = 0, minY = h, maxY = 0;
+    stack[sp++] = i; label[i] = 1;
+    while (sp) {
+      const q = stack[--sp], x = q % w, y = (q / w) | 0;
+      n++; sx += x; sy += y; if (mask[q] === 2) ink++;
+      if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (x > 0 && mask[q - 1] && label[q - 1] === -1) { label[q - 1] = 1; stack[sp++] = q - 1; }
+      if (x < w - 1 && mask[q + 1] && label[q + 1] === -1) { label[q + 1] = 1; stack[sp++] = q + 1; }
+      if (y > 0 && mask[q - w] && label[q - w] === -1) { label[q - w] = 1; stack[sp++] = q - w; }
+      if (y < h - 1 && mask[q + w] && label[q + w] === -1) { label[q + w] = 1; stack[sp++] = q + w; }
+    }
+    const bw = maxX - minX + 1, bh = maxY - minY + 1, d = Math.max(bw, bh);
+    if (d < 0.3 * ppi || d > 4 * ppi) continue;
+    if (Math.abs(bw - bh) > 0.15 * d) continue; // round marks have a square outline
+    const cx = sx / n + 0.5, cy = sy / n + 0.5;
+    const bx = (minX + maxX + 1) / 2, by = (minY + maxY + 1) / 2;
+    if (Math.hypot(cx - bx, cy - by) > 0.12 * d) continue; // the dark is spread evenly around its center
+    if (n < 0.08 * d * d) continue; // more than a hairline
+    if (ink < 0.6 * n) continue; // mostly printed ink, so a cluster of holes isn't mistaken for a bullseye
+    cands.push({ x: bx, y: by, r: d / 2 });
+  }
+  // Bullseyes never sit inside one another, so anything inside a bigger one is
+  // part of it: its inner rings, or a piece of black cut off by torn paper.
+  cands.sort((a, b) => b.r - a.r);
+  const bulls = [];
+  for (const c of cands) if (!bulls.some((u) => Math.hypot(u.x - c.x, u.y - c.y) < u.r)) bulls.push(c);
+  return bulls;
 }
 
 // Convert a group's markers (rectified pixels) to inches and measure.

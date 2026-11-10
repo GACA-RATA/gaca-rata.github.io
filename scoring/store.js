@@ -136,10 +136,16 @@ export function standings(eventId) {
   }
   for (const d of disciplines) {
     const indiv = [];
+    let hasCoins = false;
     for (const p of people) {
-      const vals = scores.filter((s) => s.personId === p.id && s.disciplineId === d.id).map((s) => s.value).filter((v) => typeof v === "number" && isFinite(v));
+      const mine = scores.filter((s) => s.personId === p.id && s.disciplineId === d.id);
+      const vals = mine.map((s) => s.value).filter((v) => typeof v === "number" && isFinite(v));
       const v = combine(vals, d.rule, d.kind);
-      if (v != null) indiv.push({ person: p, value: v, entries: vals.length });
+      // merit badge (quarter) and dime club passes, .22 groups only
+      const coin = mine.filter((s) => typeof s.quarter === "boolean");
+      const coins = coin.length ? { groups: coin.length, quarter: coin.filter((s) => s.quarter).length, dime: coin.filter((s) => s.dime).length } : null;
+      if (coins) hasCoins = true;
+      if (v != null) indiv.push({ person: p, value: v, entries: vals.length, coins });
     }
     indiv.sort((a, b) => (d.kind === "group" ? a.value - b.value : b.value - a.value));
     let rank = 0, prev = null;
@@ -161,7 +167,7 @@ export function standings(eventId) {
       else pts = best > 0 ? (100 * a.avg) / best : 0;
       patrolMap.get(a.k).by[d.id] = { avg: a.avg, shooters: a.n, points: pts };
     }
-    out.disciplines.push({ discipline: d, individuals: indiv });
+    out.disciplines.push({ discipline: d, individuals: indiv, hasCoins });
   }
   const patrols = [...patrolMap.values()].map((p) => {
     p.total = disciplines.reduce((s, d) => s + (p.by[d.id] ? p.by[d.id].points : 0), 0);

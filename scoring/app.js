@@ -17,6 +17,7 @@ if (cfg.syncUrl && !St.settings().syncUrl) St.setSetting("syncUrl", cfg.syncUrl)
 const SHEETS = [
   { id: "letter", label: "Letter 8.5 × 11 in", w: 8.5, h: 11 },
   { id: "legal", label: "Legal 8.5 × 14 in", w: 8.5, h: 14 },
+  { id: "a17", label: "NRA A-17 10.5 × 12 in", w: 10.5, h: 12 },
   { id: "custom", label: "Other size (enter it)" },
   { id: "none", label: "Not sure / odd shape" },
 ];
@@ -354,8 +355,8 @@ function viewResults() {
     </tbody></table></div></div>`;
   for (const x of st.disciplines) {
     const d = x.discipline;
-    h += `<div class="card"><h2>${esc(d.name)}</h2><div class="tableWrap"><table><thead><tr><th>#</th><th>Shooter</th><th class="num">${d.kind === "group" ? "Group (in)" : "Score"}</th></tr></thead><tbody>
-      ${x.individuals.map((r) => `<tr><td class="rank">${r.rank}</td><td>${esc(St.display(r.person))}<div class="small muted">${esc(St.team(r.person))}</div></td><td class="num">${d.kind === "group" ? fmt(r.value) : fmt(r.value, Number.isInteger(r.value) ? 0 : 1)}${r.entries > 1 ? `<div class="small muted">${r.entries} entries</div>` : ""}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">No scores yet.</td></tr>'}
+    h += `<div class="card"><h2>${esc(d.name)}</h2><div class="tableWrap"><table><thead><tr><th>#</th><th>Shooter</th><th class="num">${d.kind === "group" ? "Group (in)" : "Score"}</th>${d.kind === "group" && x.hasCoins ? '<th class="num">Quarter</th><th class="num">Dime</th>' : ""}</tr></thead><tbody>
+      ${x.individuals.map((r) => `<tr><td class="rank">${r.rank}</td><td>${esc(St.display(r.person))}<div class="small muted">${esc(St.team(r.person))}</div></td><td class="num">${d.kind === "group" ? fmt(r.value) : fmt(r.value, Number.isInteger(r.value) ? 0 : 1)}${r.entries > 1 ? `<div class="small muted">${r.entries} groups</div>` : ""}</td>${d.kind === "group" && x.hasCoins ? `<td class="num">${r.coins ? `${r.coins.quarter} of ${r.coins.groups}` : "–"}</td><td class="num">${r.coins ? `${r.coins.dime} of ${r.coins.groups}` : "–"}</td>` : ""}</tr>`).join("") || '<tr><td colspan="5" class="muted">No scores yet.</td></tr>'}
       </tbody></table></div></div>`;
   }
   return h;
@@ -837,8 +838,9 @@ function resultRows() {
     .concat(st.patrols.map((p) => [p.rank, p.troop, p.patrol, ...ds.map((d) => (p.by[d.id] ? Math.round(p.by[d.id].points * 10) / 10 : "")), Math.round(p.total * 10) / 10]));
   const per = st.disciplines.map((x) => ({
     name: x.discipline.name,
-    rows: [["Rank", "Shooter", "Troop", "Patrol", x.discipline.kind === "group" ? "Group (in)" : "Score", "Entries"]]
-      .concat(x.individuals.map((r) => [r.rank, St.display(r.person), r.person.troop, r.person.patrol, x.discipline.kind === "group" ? Math.round(r.value * 1000) / 1000 : r.value, r.entries])),
+    rows: [["Rank", "Shooter", "Troop", "Patrol", x.discipline.kind === "group" ? "Group (in)" : "Score", "Entries", ...(x.hasCoins ? ["Quarter passes", "Dime passes"] : [])]]
+      .concat(x.individuals.map((r) => [r.rank, St.display(r.person), r.person.troop, r.person.patrol, x.discipline.kind === "group" ? Math.round(r.value * 1000) / 1000 : r.value, r.entries,
+        ...(x.hasCoins ? [r.coins ? `${r.coins.quarter} of ${r.coins.groups}` : "", r.coins ? `${r.coins.dime} of ${r.coins.groups}` : ""] : [])])),
   }));
   const all = [["When", "Shooter", "Troop", "Patrol", "Event", "Value", "Shots", "Dime", "Quarter", "Caliber", "Scale from", "Instructor"]]
     .concat(St.scoresFor(ev.id).map((s) => { const p = person(s.personId) || {}; return [new Date(s.at).toLocaleString(), St.display(p), p.troop, p.patrol, s.disciplineName, s.value, s.shots ?? "", s.kind === "group" ? (s.dime ? "yes" : "no") : "", s.kind === "group" ? (s.quarter ? "yes" : "no") : "", s.caliber || "", s.scaleSource || "", s.instructor || ""]; }));
