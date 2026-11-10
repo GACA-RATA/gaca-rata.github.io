@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RATA Event Sheet</title>
+<meta name="description" content="Georgia-Carolina Council RATA — send your patrols, participants and report times to the shooting sports team.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#141414">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<style>
+  body { padding-bottom: 40px; }
+  .grid { width: 100%; border-collapse: collapse; }
+  .grid th { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); text-align: left; padding: 6px 4px; }
+  .grid td { padding: 4px; vertical-align: middle; border-bottom: 0; }
+  .grid input { min-height: 42px; padding: 8px; }
+  .grid input[type=number] { width: 70px; }
+  .grid input[type=time] { min-width: 112px; }
+  .seg { display: flex; gap: 8px; flex-wrap: wrap; }
+  .seg label { display: flex; align-items: center; gap: 8px; border: 1px solid #bdbdb7; border-radius: 10px; padding: 10px 14px; font-weight: 700; }
+  .seg input { width: 20px; height: 20px; }
+  #sheet { display: none; }
+  .qrs { display: flex; flex-wrap: wrap; gap: 18px; justify-content: center; margin: 14px 0; }
+  .qr { text-align: center; font-weight: 700; font-size: 13px; break-inside: avoid; }
+  .qr > div { padding: 8px; background: #fff; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 4px; }
+  .sheetHead { background: var(--ink); color: #fff; border-bottom: 4px solid var(--red); padding: 12px 16px; border-radius: 10px 10px 0 0; }
+  .sheetHead .kicker { display: block; }
+  @media print {
+    @page { size: letter; margin: 0.5in; }
+    body { padding: 0; }
+    .top, #form, .noprint { display: none !important; }
+    #sheet { display: block !important; }
+    main { padding: 0; max-width: none; }
+    .card { border: 0; padding: 0; }
+    .sheetHead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    table { font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="kicker">GEORGIA-CAROLINA COUNCIL RATA</span><span class="title">Event Sheet</span></div>
+</header>
+<main>
+  <div id="form">
+    <h1>Send us your patrols</h1>
+    <p class="muted">Fill this in and print the sheet, or save it as a PDF and email it. Our instructors scan its QR codes with their phones to load everyone. Your entries are saved on this device until you clear them.</p>
+
+    <div class="card">
+      <label class="f"><span>Event name</span><input type="text" id="name" placeholder="e.g. Spring Camporee 2027"></label>
+      <div class="row">
+        <label class="f"><span>Date</span><input type="date" id="date"></label>
+        <label class="f"><span>Location</span><input type="text" id="location" placeholder="e.g. Knox Scout Reservation"></label>
+      </div>
+      <span class="small muted" style="font-weight:700">Type of event</span>
+      <div class="seg" style="margin-top:6px">
+        <label><input type="radio" name="kind" value="camporee" checked> Camporee</label>
+        <label><input type="radio" name="kind" value="merit"> Merit badge class</label>
+      </div>
+    </div>
+
+    <div id="camporee">
+      <div class="card">
+        <h2>Ranges at this event</h2>
+        <div class="seg" id="ranges"></div>
+      </div>
+      <div class="card">
+        <h2>Patrols and report times</h2>
+        <p class="small muted">One row per patrol. Put the number of scouts who will shoot, and the time the patrol reports to each range.</p>
+        <div class="tableWrap"><table class="grid" id="patrolTable"></table></div>
+        <div class="btns" style="margin-top:8px"><button class="btn" id="addPatrol" type="button">+ Add patrol</button></div>
+      </div>
+    </div>
+
+    <div id="merit" class="hide">
+      <div class="card">
+        <h2>Scouts in the class</h2>
+        <p class="small muted">First name and last initial only.</p>
+        <div class="tableWrap"><table class="grid" id="scoutTable"></table></div>
+        <div class="btns" style="margin-top:8px"><button class="btn" id="addScout" type="button">+ Add scout</button><button class="btn" id="pasteToggle" type="button">Paste a list</button></div>
+        <div id="pasteWrap" class="hide" style="margin-top:10px">
+          <label class="f"><span>One per line: first name, last name, troop</span><textarea id="pasteBox" placeholder="Alex, Rivera, 615&#10;Mia, Chen, 615"></textarea></label>
+          <button class="btn dark" id="pasteAdd" type="button">Add these</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="problems"></div>
+    <div class="btns">
+      <button class="btn primary big" id="make" type="button">Make the sheet</button>
+      <a class="btn big" href="RATA_Organizer_Template.xlsx" download>Use the Excel template instead</a>
+      <button class="btn big" id="clear" type="button">Start over</button>
+    </div>
+  </div>
+
+  <div id="sheet">
+    <div class="noprint btns" style="margin-bottom:12px">
+      <button class="btn primary big" id="print" type="button">Print or save as PDF</button>
+      <button class="btn big" id="back" type="button">Back to editing</button>
+    </div>
+    <div class="card" style="padding:0">
+      <div class="sheetHead"><span class="kicker">GEORGIA-CAROLINA COUNCIL RATA</span><b style="font-size:20px" id="sTitle"></b><div class="small" id="sSub" style="color:#ddd"></div></div>
+      <div style="padding:12px 4px">
+        <p class="small"><b>For the shooting sports team:</b> in the Scoring app, open Events → Load the organizer's sheet → Scan the QR codes, and photograph each code in order.</p>
+        <div class="qrs" id="qrs"></div>
+        <div id="sTable"></div>
+      </div>
+    </div>
+  </div>
+</main>
+<script type="module">
+import * as RF from "./rosterfmt.js";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const KEY = "rata-organizer-draft";
+let D = { name: "", date: "", location: "", kind: "camporee", ranges: ["rifle", "shotgun", "archery"], patrols: [{ troop: "", patrol: "", count: "", times: {} }], scouts: [{ first: "", last: "", troop: "" }] };
+try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); if (s) D = Object.assign(D, s); } catch {}
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(D)); } catch {} };
+
+function render() {
+  $("#name").value = D.name; $("#date").value = D.date; $("#location").value = D.location;
+  document.querySelectorAll("input[name=kind]").forEach((r) => (r.checked = r.value === D.kind));
+  $("#camporee").classList.toggle("hide", D.kind !== "camporee");
+  $("#merit").classList.toggle("hide", D.kind !== "merit");
+  $("#ranges").innerHTML = RF.RANGES.map((r) => `<label><input type="checkbox" data-range="${r.id}" ${D.ranges.includes(r.id) ? "checked" : ""}> ${r.name}</label>`).join("");
+  const rs = RF.RANGES.filter((r) => D.ranges.includes(r.id));
+  $("#patrolTable").innerHTML = `<tr><th>Troop</th><th>Patrol</th><th>Scouts</th>${rs.map((r) => `<th>${r.name}</th>`).join("")}<th></th></tr>` +
+    D.patrols.map((p, i) => `<tr>
+      <td><input type="text" data-p="${i}" data-k="troop" value="${esc(p.troop)}" placeholder="615" inputmode="numeric" style="width:80px"></td>
+      <td><input type="text" data-p="${i}" data-k="patrol" value="${esc(p.patrol)}" placeholder="Eagle" style="min-width:120px"></td>
+      <td><input type="number" data-p="${i}" data-k="count" value="${esc(p.count)}" min="1" max="30" placeholder="6"></td>
+      ${rs.map((r) => `<td><input type="time" data-p="${i}" data-t="${r.id}" value="${esc(p.times[r.id] || "")}"></td>`).join("")}
+      <td><button class="x" type="button" data-delp="${i}" title="Remove">×</button></td></tr>`).join("");
+  $("#scoutTable").innerHTML = `<tr><th>First name</th><th>Last initial</th><th>Troop</th><th></th></tr>` +
+    D.scouts.map((s, i) => `<tr>
+      <td><input type="text" data-s="${i}" data-k="first" value="${esc(s.first)}" placeholder="Alex"></td>
+      <td><input type="text" data-s="${i}" data-k="last" value="${esc(s.last)}" placeholder="R" maxlength="20" style="width:80px"></td>
+      <td><input type="text" data-s="${i}" data-k="troop" value="${esc(s.troop)}" placeholder="615" style="width:80px"></td>
+      <td><button class="x" type="button" data-dels="${i}" title="Remove">×</button></td></tr>`).join("");
+}
+
+document.addEventListener("input", (e) => {
+  const t = e.target;
+  if (t.id === "name" || t.id === "date" || t.id === "location") D[t.id] = t.value;
+  else if (t.dataset.p != null) { const p = D.patrols[+t.dataset.p]; if (t.dataset.t) p.times[t.dataset.t] = t.value; else p[t.dataset.k] = t.value; }
+  else if (t.dataset.s != null) D.scouts[+t.dataset.s][t.dataset.k] = t.value;
+  save();
+});
+document.addEventListener("change", (e) => {
+  const t = e.target;
+  if (t.name === "kind") { D.kind = t.value; save(); render(); }
+  if (t.dataset.range) { D.ranges = RF.RANGES.map((r) => r.id).filter((id) => (id === t.dataset.range ? t.checked : D.ranges.includes(id))); save(); render(); }
+});
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  if (t.id === "addPatrol") { const last = D.patrols[D.patrols.length - 1]; D.patrols.push({ troop: last?.troop || "", patrol: "", count: "", times: {} }); save(); render(); document.querySelector(`[data-p="${D.patrols.length - 1}"][data-k="patrol"]`)?.focus(); }
+  if (t.id === "addScout") { const last = D.scouts[D.scouts.length - 1]; D.scouts.push({ first: "", last: "", troop: last?.troop || "" }); save(); render(); document.querySelector(`[data-s="${D.scouts.length - 1}"][data-k="first"]`)?.focus(); }
+  if (t.dataset.delp != null) { D.patrols.splice(+t.dataset.delp, 1); if (!D.patrols.length) D.patrols.push({ troop: "", patrol: "", count: "", times: {} }); save(); render(); }
+  if (t.dataset.dels != null) { D.scouts.splice(+t.dataset.dels, 1); if (!D.scouts.length) D.scouts.push({ first: "", last: "", troop: "" }); save(); render(); }
+  if (t.id === "pasteToggle") $("#pasteWrap").classList.toggle("hide");
+  if (t.id === "pasteAdd") {
+    const rows = $("#pasteBox").value.split(/\r?\n/).map((l) => l.split(/\t|,/).map((x) => x.trim())).filter((c) => c[0]);
+    D.scouts = D.scouts.filter((s) => s.first);
+    rows.forEach((c) => D.scouts.push({ first: c[0], last: (c[1] || "").charAt(0).toUpperCase(), troop: c[2] || "" }));
+    $("#pasteBox").value = ""; $("#pasteWrap").classList.add("hide"); save(); render();
+  }
+  if (t.id === "clear") {
+    if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "Tap again to clear everything"; setTimeout(() => { t.dataset.armed = ""; t.textContent = "Start over"; }, 3000); return; }
+    try { localStorage.removeItem(KEY); } catch {} location.reload();
+  }
+  if (t.id === "make") make();
+  if (t.id === "back") { $("#sheet").style.display = "none"; $("#form").style.display = ""; }
+  if (t.id === "print") window.print();
+});
+
+function payload() {
+  if (D.kind === "merit") return {
+    v: 1, name: D.name.trim(), date: D.date, location: D.location.trim(), kind: "merit", ranges: ["rifle"], patrols: [],
+    scouts: D.scouts.filter((s) => s.first.trim()).map((s) => ({ name: `${s.first.trim()}${s.last.trim() ? " " + s.last.trim().charAt(0).toUpperCase() + "." : ""}`, troop: s.troop.trim() })),
+  };
+  return {
+    v: 1, name: D.name.trim(), date: D.date, location: D.location.trim(), kind: "camporee", ranges: D.ranges, scouts: [],
+    patrols: D.patrols.filter((p) => p.troop.trim() || p.patrol.trim()).map((p) => ({
+      troop: p.troop.trim(), patrol: p.patrol.trim(), count: Math.max(0, Math.min(30, parseInt(p.count, 10) || 0)),
+      times: Object.fromEntries(D.ranges.filter((r) => p.times[r]).map((r) => [r, p.times[r]])),
+    })),
+  };
+}
+
+function problems(pl) {
+  const out = [];
+  if (!pl.name) out.push("Give the event a name.");
+  if (pl.kind === "camporee") {
+    if (!pl.patrols.length) out.push("Add at least one patrol.");
+    pl.patrols.forEach((p, i) => {
+      const who = p.patrol || p.troop || `Row ${i + 1}`;
+      if (!p.troop) out.push(`${who}: add the troop number.`);
+      if (!p.patrol) out.push(`Row ${i + 1}: add the patrol name.`);
+      if (!p.count) out.push(`${who}: add how many scouts will shoot.`);
+      const missing = pl.ranges.filter((r) => !p.times[r]).map((r) => RF.RANGES.find((x) => x.id === r).name);
+      if (missing.length) out.push(`${who}: add a report time for ${missing.join(", ")}.`);
+    });
+  } else if (!pl.scouts.length) out.push("Add at least one scout.");
+  return out;
+}
+
+async function make() {
+  const pl = payload();
+  const pr = problems(pl);
+  $("#problems").innerHTML = pr.length ? `<div class="note warn"><b>Before making the sheet:</b><ul style="margin:6px 0 0;padding-left:20px">${pr.slice(0, 8).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>${pr.length > 8 ? `<p>…and ${pr.length - 8} more.</p>` : ""}</div>` : "";
+  if (pr.length) { $("#problems").scrollIntoView({ behavior: "smooth", block: "center" }); return; }
+  if (!window.QRCode) {
+    try { await new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+    catch { $("#problems").innerHTML = '<div class="note warn">The QR code maker needs an internet connection. Connect and try again, or use the Excel template.</div>'; return; }
+  }
+  const parts = RF.encodeParts(pl);
+  $("#sTitle").textContent = pl.name;
+  $("#sSub").textContent = [pl.date && new Date(pl.date + "T12:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }), pl.location, pl.kind === "merit" ? "Merit badge class" : "Camporee"].filter(Boolean).join(" · ");
+  const box = $("#qrs");
+  box.innerHTML = "";
+  parts.forEach((txt, i) => {
+    const wrap = document.createElement("div"); wrap.className = "qr";
+    const q = document.createElement("div"); wrap.appendChild(q);
+    wrap.appendChild(document.createTextNode(parts.length > 1 ? `Code ${i + 1} of ${parts.length}` : "Scan this code"));
+    box.appendChild(wrap);
+    new window.QRCode(q, { text: txt, width: 250, height: 250, correctLevel: window.QRCode.CorrectLevel.M });
+  });
+  if (pl.kind === "merit") {
+    $("#sTable").innerHTML = `<h3>Scouts (${pl.scouts.length})</h3><table><thead><tr><th>#</th><th>Scout</th><th>Troop</th></tr></thead><tbody>${pl.scouts.map((s, i) => `<tr><td>${i + 1}</td><td>${esc(s.name)}</td><td>${esc(s.troop)}</td></tr>`).join("")}</tbody></table>`;
+  } else {
+    const rs = RF.RANGES.filter((r) => pl.ranges.includes(r.id));
+    const total = pl.patrols.reduce((t, p) => t + p.count, 0);
+    $("#sTable").innerHTML = `<h3>Patrols and report times (${pl.patrols.length} patrols, ${total} scouts)</h3><table><thead><tr><th>Troop</th><th>Patrol</th><th class="num">Scouts</th>${rs.map((r) => `<th class="num">${r.name}</th>`).join("")}</tr></thead><tbody>
+      ${pl.patrols.map((p) => `<tr><td>${esc(p.troop)}</td><td>${esc(p.patrol)}</td><td class="num">${p.count}</td>${rs.map((r) => `<td class="num">${esc(RF.clock(p.times[r.id]))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  }
+  $("#form").style.display = "none"; $("#sheet").style.display = "block";
+  window.scrollTo(0, 0);
+}
+render();
+</script>
+</body>
+</html>

@@ -68,6 +68,9 @@ export function roster(eventId) {
     .sort((a, b) => team(a).localeCompare(team(b)) || display(a).localeCompare(display(b)));
 }
 export const display = (p) => p.name || p.patrol || p.troop || "(no name)";
+// Numbered camporee participants ("Participant 3") only make sense with their patrol.
+export const isNumbered = (p) => /^Participant \d+$/.test(p?.name || "");
+export const label = (p) => (isNumbered(p) ? `${p.name} · ${[p.patrol, p.troop && "Troop " + p.troop.replace(/^troop\s*/i, "")].filter(Boolean).join(", ")}` : display(p));
 export const team = (p) => [p.troop && `Troop ${p.troop.replace(/^troop\s*/i, "")}`, p.patrol].filter(Boolean).join(" · ") || "No patrol";
 export const teamKey = (p) => `${(p.troop || "").toLowerCase().replace(/^troop\s*/, "")}|${(p.patrol || "").toLowerCase()}`;
 

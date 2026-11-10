@@ -1,5 +1,6 @@
 import * as St from "./store.js";
 import { CALIBERS, COINS, measureGroup, analyze as analyzeHere } from "./engine.js";
+import * as RF from "./rosterfmt.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -139,7 +140,8 @@ function viewEvents() {
     ${act && act.id === e.id ? '<span class="chip on">Current</span>' : `<button class="btn slim" data-act="useEvent" data-id="${e.id}">Use</button>`}
     <button class="btn slim" data-act="editEvent" data-id="${e.id}">Edit</button></li>`).join("") || '<li class="muted">No events yet.</li>'}</ul>
     <div class="btns" style="margin-top:10px"><button class="btn primary" data-act="newEvent">New event</button></div></div>`;
-  if (act) h += viewRoster(act) + viewShare(act);
+  h += viewImport(act);
+  if (act) h += viewSchedule(act) + viewRoster(act) + viewShare(act);
   return h;
 }
 
@@ -153,6 +155,9 @@ function viewEventForm(ev) {
       <label class="f"><span>Shots per group</span><input type="number" id="evShots" min="1" max="20" value="${ev.shotsPerGroup || 5}"></label>
     </div>
     <label class="f"><span>Location</span><input type="text" id="evLoc" value="${esc(ev.location || "")}" placeholder="e.g. Knox Scout Reservation"></label>
+    <label class="f"><span>Type of event</span><select id="evKind">
+      <option value="camporee" ${ev.kind !== "merit" ? "selected" : ""}>Camporee: patrols ranked against each other</option>
+      <option value="merit" ${ev.kind === "merit" ? "selected" : ""}>Merit badge class: each scout on their own</option></select></label>
   </div>
   <div class="card"><h2>What's being scored</h2>
     ${ds.map((d, i) => `
@@ -162,14 +167,153 @@ function viewEventForm(ev) {
         <div class="row" style="margin-top:8px">
         ${d.kind === "group"
           ? `<label class="f"><span>Caliber</span><select data-d="${i}" data-k="caliberId">${CALIBERS.map((c) => `<option value="${c.id}" ${c.id === d.caliberId ? "selected" : ""}>${c.label}</option>`).join("")}</select></label>
-             <label class="f"><span>If a shooter has several groups</span><select data-d="${i}" data-k="rule"><option value="best" ${d.rule === "best" ? "selected" : ""}>Use the smallest</option><option value="average" ${d.rule === "average" ? "selected" : ""}>Average them</option></select></label>`
+             <label class="f"><span>If a participant has several groups</span><select data-d="${i}" data-k="rule"><option value="best" ${d.rule === "best" ? "selected" : ""}>Use the smallest</option><option value="average" ${d.rule === "average" ? "selected" : ""}>Average them</option></select></label>`
           : `<label class="f"><span>Top possible score</span><input type="number" data-d="${i}" data-k="max" value="${d.max || ""}" min="1"></label>
-             <label class="f"><span>If a shooter has several scores</span><select data-d="${i}" data-k="rule"><option value="total" ${d.rule === "total" ? "selected" : ""}>Add them up</option><option value="best" ${d.rule === "best" ? "selected" : ""}>Use the highest</option><option value="average" ${d.rule === "average" ? "selected" : ""}>Average them</option></select></label>`}
+             <label class="f"><span>If a participant has several scores</span><select data-d="${i}" data-k="rule"><option value="total" ${d.rule === "total" ? "selected" : ""}>Add them up</option><option value="best" ${d.rule === "best" ? "selected" : ""}>Use the highest</option><option value="average" ${d.rule === "average" ? "selected" : ""}>Average them</option></select></label>`}
         </div>
         <div class="small muted">${d.kind === "group" ? "Scored from a photo of the target. Smaller groups rank higher." : "Instructor types in the score. Higher ranks higher."}</div>
       </div>`).join("")}
   </div>
   <div class="btns"><button class="btn primary big" data-act="saveEvent">Save event</button><button class="btn big" data-act="cancelEvent">Cancel</button></div>`;
+}
+
+// ---------------- organizer sheet
+
+const ORGANIZER_URL = () => new URL("organizer.html", location.href).href;
+
+function viewImport(act) {
+  const im = S.imp;
+  let h = `<div class="card"><h2>Load the organizer's sheet</h2>`;
+  if (!im) {
+    h += `<p class="small muted">The event organizer fills in the patrols, participants and report times, then sends a sheet of QR codes or the Excel file. Load it here instead of typing it all in.</p>
+      <label class="btn primary block">Scan the QR codes<input type="file" accept="image/*" capture="environment" id="qrIn" class="hide"></label>
+      <label class="btn block" style="margin-top:8px">Open the Excel file<input type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" id="xlsIn" class="hide"></label>
+      <p class="small muted" style="margin-top:10px">Send organizers this form: <span id="orgLink" style="word-break:break-all">${esc(ORGANIZER_URL())}</span> <button class="btn slim" data-act="copyOrg">Copy</button></p>`;
+  } else if (im.busy) {
+    h += `<div class="spinner"></div><p style="text-align:center">Reading…</p>`;
+  } else if (im.error) {
+    h += `<div class="note warn">${esc(im.error)}${im.total ? ` You have ${im.have.length} of ${im.total} codes so far.` : ""}</div><div class="btns"><label class="btn primary">${im.total ? `Scan code ${im.missing[0]}` : "Try again"}<input type="file" accept="image/*" capture="environment" id="qrIn" class="hide"></label><button class="btn" data-act="cancelImport">Cancel</button></div>`;
+  } else if (!im.payload) {
+    h += `<div class="note info">Got code${im.have.length === 1 ? "" : "s"} ${im.have.join(", ")} of ${im.total}. Take a photo of code ${im.missing[0]} next.</div>
+      <div class="btns"><label class="btn primary">Scan code ${im.missing[0]}<input type="file" accept="image/*" capture="environment" id="qrIn" class="hide"></label><button class="btn" data-act="cancelImport">Cancel</button></div>`;
+  } else {
+    const pl = im.payload;
+    const n = pl.kind === "merit" ? pl.scouts.length : pl.patrols.reduce((t, x) => t + (x.count || 0), 0);
+    h += `<p><b>${esc(pl.name || "Untitled event")}</b>${pl.date ? " · " + esc(pl.date) : ""}${pl.location ? " · " + esc(pl.location) : ""}</p>
+      <p class="small">${pl.kind === "merit" ? `Merit badge class · ${pl.scouts.length} scouts` : `Camporee · ${pl.patrols.length} patrols · ${n} participants${pl.ranges.length ? " · report times for " + pl.ranges.map((r) => RF.RANGES.find((x) => x.id === r)?.name || r).join(", ") : ""}`}</p>
+      <div class="btns">
+        ${act ? `<button class="btn primary" data-act="applyImport" data-into="${act.id}">Add to ${esc(act.name)}</button>` : ""}
+        <button class="btn ${act ? "" : "primary"}" data-act="applyImport" data-into="">Make it a new event</button>
+        <button class="btn" data-act="cancelImport">Cancel</button></div>`;
+  }
+  return h + `</div>`;
+}
+
+function viewSchedule(ev) {
+  const sch = ev.schedule || [];
+  if (!sch.length) return "";
+  const ranges = RF.RANGES.filter((r) => sch.some((x) => x.times && x.times[r.id]));
+  const order = [...sch].sort((a, b) => (RF.minutes(a.times?.[ranges[0]?.id]) ?? 9999) - (RF.minutes(b.times?.[ranges[0]?.id]) ?? 9999));
+  return `<div class="card"><h2>Report times</h2><div class="tableWrap"><table><thead><tr><th>Patrol</th>${ranges.map((r) => `<th class="num">${r.name}</th>`).join("")}</tr></thead><tbody>
+    ${order.map((x) => `<tr><td>${esc(St.team(x))}</td>${ranges.map((r) => `<td class="num">${esc(x.times?.[r.id] ? RF.clock(x.times[r.id]) : "–")}</td>`).join("")}</tr>`).join("")}
+    </tbody></table></div></div>`;
+}
+
+async function readQrPhoto(file) {
+  if (!window.jsQR) await loadScript("https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js");
+  const ph = await loadPhoto(file);
+  // try a few sizes: small codes read better at full size, blurry ones smaller
+  for (const edge of [1600, 1100, 2400, 800]) {
+    const k = Math.min(1, edge / Math.max(ph.width, ph.height));
+    const w = Math.round(ph.width * k), h = Math.round(ph.height * k);
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(ph.canvas, 0, 0, w, h);
+    const r = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
+    if (r && r.data) return r.data;
+  }
+  return null;
+}
+
+async function importQr(file) {
+  // keep the codes already scanned, even if the last photo didn't read
+  const prev = S.imp && S.imp.parts && !S.imp.payload ? S.imp : null;
+  S.imp = { ...(prev || {}), busy: true };
+  render();
+  let raw;
+  try { raw = await readQrPhoto(file); }
+  catch { S.imp = { error: "The QR reader needs signal the first time it's used. Try again with signal." }; return render(); }
+  const part = raw && RF.readPart(raw);
+  if (!part) { S.imp = { ...(prev || {}), busy: false, error: raw ? "That QR code isn't an organizer sheet code." : "Couldn't read a QR code in that photo. Fill the screen with one code, hold steady, and try again." }; return render(); }
+  const im = prev && prev.id === part.id ? prev : { id: part.id, total: part.total, parts: {} };
+  im.parts[part.index] = part.text;
+  im.have = Object.keys(im.parts).map(Number).sort((a, b) => a - b);
+  im.missing = [];
+  for (let i = 1; i <= im.total; i++) if (im.parts[i] == null) im.missing.push(i);
+  im.busy = false; im.error = null;
+  if (!im.missing.length) {
+    try { im.payload = RF.joinParts(im.parts, im.total); }
+    catch (e) { S.imp = { error: "Couldn't read the organizer sheet: " + e.message }; return render(); }
+  }
+  S.imp = im;
+  render();
+}
+
+async function importXlsx(file) {
+  S.imp = { busy: true };
+  render();
+  try {
+    if (!window.XLSX) await loadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const sheets = {};
+    wb.SheetNames.forEach((n) => { sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: false, defval: "" }); });
+    const pl = RF.fromSheets(sheets);
+    if (!pl.patrols.length && !pl.scouts.length) throw new Error("No patrols or scouts found. Is this the organizer template?");
+    S.imp = { payload: pl };
+  } catch (e) {
+    S.imp = { error: /signal|fetch|load/i.test(String(e)) ? "The Excel reader needs signal the first time it's used." : String(e.message || e) };
+  }
+  render();
+}
+
+function isoDate(d) {
+  if (!d) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const t = new Date(d);
+  return isNaN(t) ? "" : t.toLocaleDateString("en-CA");
+}
+
+function applyImport(pl, intoId) {
+  let ev = intoId ? St.data().events[intoId] : null;
+  const onFor = (id) => (pl.kind === "merit" ? id === "rifle" : pl.ranges.length ? pl.ranges.includes(id) : ["rifle", "shotgun", "archery"].includes(id));
+  if (!ev) {
+    ev = St.saveEvent({
+      name: pl.name || "New event", date: isoDate(pl.date) || new Date().toLocaleDateString("en-CA"), location: pl.location || "",
+      shotsPerGroup: 5, kind: pl.kind, schedule: [],
+      disciplines: St.DEFAULT_DISCIPLINES.map((d) => ({ ...d, on: onFor(d.id) })),
+    });
+  } else {
+    ev = { ...ev, kind: ev.kind || pl.kind, schedule: [...(ev.schedule || [])] };
+    if (pl.kind === "camporee" && pl.ranges.length) ev.disciplines = (ev.disciplines || []).map((d) => ({ ...d, on: d.on || pl.ranges.includes(d.id) }));
+  }
+  let added = 0;
+  if (pl.kind === "merit") {
+    for (const sc of pl.scouts) { const r = { name: St.tidyName(sc.name) || sc.name, patrol: "", troop: sc.troop }; if (!findDup(ev.id, r)) { St.savePerson({ eventId: ev.id, ...r }); added++; } }
+  } else {
+    for (const pt of pl.patrols) {
+      const key = St.teamKey(pt);
+      const at = ev.schedule.findIndex((x) => St.teamKey(x) === key);
+      const entry = { troop: pt.troop, patrol: pt.patrol, times: { ...(at >= 0 ? ev.schedule[at].times : {}), ...pt.times } };
+      if (at >= 0) ev.schedule[at] = entry; else ev.schedule.push(entry);
+      for (let i = 1; i <= (pt.count || 0); i++) {
+        const r = { name: `Participant ${i}`, patrol: pt.patrol, troop: pt.troop };
+        if (!findDup(ev.id, r)) { St.savePerson({ eventId: ev.id, ...r }); added++; }
+      }
+    }
+  }
+  St.saveEvent(ev);
+  St.setSetting("activeEvent", ev.id);
+  return { ev, added };
 }
 
 function viewShare(ev) {
@@ -189,7 +333,7 @@ function viewRoster(ev) {
   const people = St.roster(ev.id);
   const groups = new Map();
   people.forEach((p) => { const k = St.team(p); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(p); });
-  return `<div class="card"><h2>Shooters at ${esc(ev.name)}</h2>
+  return `<div class="card"><h2>Participants at ${esc(ev.name)}</h2>
     <p class="small muted">First name and last initial only. For patrol-only scoring, leave the name blank and just fill in the patrol.</p>
     <div class="row"><label class="f"><span>Name</span><input type="text" id="pName" placeholder="Alex R." autocomplete="off"></label></div>
     <div class="row">
@@ -218,28 +362,43 @@ function viewScore() {
       <div class="row"><input type="text" id="firstName" placeholder="First name and last initial" autocomplete="name"><button class="btn primary" data-act="saveName" style="flex:0 0 auto">Save</button></div></div>` : ""}
     <h1>${esc(ev.name)}</h1>
     <div class="chips">${disciplinesOn(ev).map((x) => `<button class="chip ${x.id === d.id ? "on" : ""}" data-act="pickDisc" data-id="${x.id}">${esc(x.name)}</button>`).join("")}</div>`;
-  h += viewShooterPick(ev);
+  h += viewParticipantPick(ev);
   h += d.kind === "group" ? viewGroupScoring(ev, d) : viewPointsScoring(ev, d);
   h += viewRecent(ev, d);
   return h;
 }
 
-function viewShooterPick(ev) {
+function viewParticipantPick(ev) {
   const people = St.roster(ev.id);
   const sel = person(S.personId);
   const q = S.search.trim().toLowerCase();
   const list = people.filter((p) => !q || (St.display(p) + " " + St.team(p)).toLowerCase().includes(q));
-  return `<div class="card"><h2>Shooter${sel ? `: <span style="color:var(--red)">${esc(St.display(sel))}</span>` : ""}</h2>
-    ${people.length ? `<input type="search" id="search" value="${esc(S.search)}" placeholder="Find a name or patrol" style="margin-bottom:8px">
-    <div class="pick">${list.map((p) => `<button data-act="pickPerson" data-id="${p.id}" class="${p.id === S.personId ? "on" : ""}"><b>${esc(St.display(p))}</b><small>${esc(St.team(p))}</small></button>`).join("") || '<span class="muted small">No match.</span>'}</div>`
-    : `<p class="muted">No shooters yet.</p><button class="btn" data-tab="events">Add shooters</button>`}
+  const btn = (p, sub) => `<button data-act="pickPerson" data-id="${p.id}" class="${p.id === S.personId ? "on" : ""}"><b>${esc(St.display(p))}</b>${sub ? `<small>${esc(St.team(p))}</small>` : ""}</button>`;
+  let body;
+  const sch = ev.schedule || [];
+  if (sch.length && ev.kind !== "merit") {
+    // camporee: one block per patrol, in report-time order for this range
+    const d = currentDiscipline();
+    const timeOf = (p) => sch.find((x) => St.teamKey(x) === St.teamKey(p))?.times?.[d.id] || "";
+    const teams = new Map();
+    list.forEach((p) => { const k = St.teamKey(p); if (!teams.has(k)) teams.set(k, { label: St.team(p), time: timeOf(p), people: [] }); teams.get(k).people.push(p); });
+    const order = [...teams.values()].sort((a, b) => (RF.minutes(a.time) ?? 9999) - (RF.minutes(b.time) ?? 9999) || a.label.localeCompare(b.label));
+    body = order.map((t) => `<h3 style="display:flex;justify-content:space-between;gap:8px"><span>${esc(t.label)}</span>${t.time ? `<span style="color:var(--red)">${esc(d.name)} ${esc(RF.clock(t.time))}</span>` : ""}</h3>
+      <div class="pick" style="max-height:none">${t.people.map((p) => btn(p, false)).join("")}</div>`).join("") || '<span class="muted small">No match.</span>';
+    body = `<div style="max-height:420px;overflow:auto">${body}</div>`;
+  } else {
+    body = `<div class="pick">${list.map((p) => btn(p, true)).join("") || '<span class="muted small">No match.</span>'}</div>`;
+  }
+  return `<div class="card"><h2>Participant${sel ? `: <span style="color:var(--red)">${esc(St.label(sel))}</span>` : ""}</h2>
+    ${people.length ? `<input type="search" id="search" value="${esc(S.search)}" placeholder="Find a name, patrol or troop" style="margin-bottom:8px">${body}`
+    : `<p class="muted">No participants yet.</p><button class="btn" data-tab="events">Add participants</button>`}
   </div>`;
 }
 
 function viewPointsScoring(ev, d) {
   return `<div class="card"><h2>${esc(d.name)} score</h2>
     <label class="f"><span>Score${d.max ? ` (out of ${d.max})` : ""}</span><input type="number" id="pts" inputmode="numeric" min="0" ${d.max ? `max="${d.max}"` : ""} style="font-size:28px;min-height:60px"></label>
-    <button class="btn primary big block" data-act="savePoints" ${S.personId ? "" : "disabled"}>${S.personId ? "Save score for " + esc(St.display(person(S.personId))) : "Pick a shooter first"}</button>
+    <button class="btn primary big block" data-act="savePoints" ${S.personId ? "" : "disabled"}>${S.personId ? "Save score for " + esc(St.label(person(S.personId))) : "Pick a participant first"}</button>
   </div>`;
 }
 
@@ -292,7 +451,7 @@ function viewGroupScoring(ev, d) {
   const L = (x) => LETTERS[a.groups.indexOf(x)] || String(a.groups.indexOf(x) + 1);
   const scored = a.groups.filter((x) => x.shots.length);
   const off = scored.filter((x) => x.shots.length !== N);
-  const pid = S.personId, pName = pid ? St.display(person(pid)) : "";
+  const pid = S.personId, pName = pid ? St.label(person(pid)) : "";
   const savedHere = !!(g && pid && (g.savedIds || []).includes(pid));
   const unsaved = pid ? scored.filter((x) => !(x.savedIds || []).includes(pid)) : [];
   h += `<div class="card"><h2>Found on this sheet</h2>
@@ -319,7 +478,7 @@ function viewGroupScoring(ev, d) {
       ${close(m.dime.marginIn) || close(m.quarter.marginIn) ? '<div class="note warn" style="margin-top:10px">Too close to call from a photo. Check it with a real coin.</div>' : ""}` : ""}` : '<p class="muted">No shots in this group yet. Tap <b>Fix markers</b>, then tap the holes to add them.</p>'}
     <p class="small muted" style="margin-top:10px">${srcText} · ${fmt(r.ppi, 0)} px per inch</p>
     <div style="display:grid;gap:8px">
-      <button class="btn primary big block" data-act="saveGroup" ${pid && m && !savedHere ? "" : "disabled"}>${!pid ? "Pick a shooter to save" : savedHere ? "Saved for " + esc(pName) + " ✓" : `Save group ${L(g)} for ` + esc(pName)}</button>
+      <button class="btn primary big block" data-act="saveGroup" ${pid && m && !savedHere ? "" : "disabled"}>${!pid ? "Pick a participant to save" : savedHere ? "Saved for " + esc(pName) + " ✓" : `Save group ${L(g)} for ` + esc(pName)}</button>
       ${pid && scored.length > 1 && unsaved.length > 1 ? `<button class="btn dark block" data-act="saveAll">Save all ${unsaved.length} groups for ${esc(pName)}</button>` : ""}
     </div>
   </div>
@@ -334,7 +493,7 @@ function viewRecent(ev, d) {
   return `<div class="card"><h2>Recent ${esc(d.name)} scores</h2><ul class="list">${list.map((s) => {
     const p = person(s.personId);
     const val = d.kind === "group" ? `${fmt(s.value)} in${s.dime ? " · dime" : ""}${s.quarter ? " · quarter" : ""}` : `${s.value}${d.max ? " / " + d.max : ""}`;
-    return `<li><div class="grow"><div class="name">${esc(p ? St.display(p) : "?")}</div><div class="small muted">${esc(val)} · ${new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${s.instructor ? " · " + esc(s.instructor) : ""}</div></div><button class="x" data-act="delScore" data-id="${s.id}">×</button></li>`;
+    return `<li><div class="grow"><div class="name">${esc(p ? St.label(p) : "?")}</div><div class="small muted">${esc(val)} · ${new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${s.instructor ? " · " + esc(s.instructor) : ""}</div></div><button class="x" data-act="delScore" data-id="${s.id}">×</button></li>`;
   }).join("")}</ul></div>`;
 }
 
@@ -346,16 +505,16 @@ function viewResults() {
   const st = St.standings(ev.id);
   const ds = st.disciplines.map((x) => x.discipline);
   let h = `<h1>${esc(ev.name)} results${ev.locked ? ' <span class="chip on" style="vertical-align:middle;font-size:13px">Final</span>' : ""}</h1>
-    ${st.unassigned.length ? `<div class="note warn">${st.unassigned.length === 1 ? "1 shooter has" : st.unassigned.length + " shooters have"} no patrol or troop, so ${st.unassigned.length === 1 ? "isn't" : "aren't"} in the patrol rankings: ${st.unassigned.map((p) => esc(St.display(p))).join(", ").replace(/\.$/, "")}. Fix it on the Events tab.</div>` : ""}
+    ${st.unassigned.length && ev.kind !== "merit" ? `<div class="note warn">${st.unassigned.length === 1 ? "1 participant has" : st.unassigned.length + " participants have"} no patrol or troop, so ${st.unassigned.length === 1 ? "isn't" : "aren't"} in the patrol rankings: ${st.unassigned.map((p) => esc(St.display(p))).join(", ").replace(/\.$/, "")}. Fix it on the Events tab.</div>` : ""}
     ${cfg.preview ? '<div class="note info">This is the preview copy. The Excel and PDF buttons and shared scores work once the app is on its own web address.</div>' : ""}
     <div class="btns" style="margin-bottom:14px"><button class="btn primary" data-act="xlsx">Excel file</button><button class="btn primary" data-act="pdf">PDF to print</button><button class="btn" data-act="syncNow">Sync now</button></div>
-    <div class="card"><h2>Patrols</h2><p class="small muted">Each event is out of 100: the best patrol gets 100, others get their share. Patrol score is the average of its shooters.</p>
+    ${ev.kind === "merit" ? "" : `<div class="card"><h2>Patrols</h2><p class="small muted">Each event is out of 100: the best patrol gets 100, others get their share. Patrol score is the average of its participants.</p>
     <div class="tableWrap"><table><thead><tr><th>#</th><th>Patrol</th>${ds.map((d) => `<th class="num">${esc(d.name)}</th>`).join("")}<th class="num">Total</th></tr></thead><tbody>
-    ${st.patrols.map((p) => `<tr><td class="rank">${p.rank}</td><td>${esc(p.label)}<div class="small muted">${p.members} on list</div></td>${ds.map((d) => `<td class="num">${p.by[d.id] ? fmt(p.by[d.id].points, 1) : "–"}</td>`).join("")}<td class="num"><b>${fmt(p.total, 1)}</b></td></tr>`).join("") || `<tr><td colspan="${ds.length + 3}" class="muted">No shooters yet.</td></tr>`}
-    </tbody></table></div></div>`;
+    ${st.patrols.map((p) => `<tr><td class="rank">${p.rank}</td><td>${esc(p.label)}<div class="small muted">${p.members} on list</div></td>${ds.map((d) => `<td class="num">${p.by[d.id] ? fmt(p.by[d.id].points, 1) : "–"}</td>`).join("")}<td class="num"><b>${fmt(p.total, 1)}</b></td></tr>`).join("") || `<tr><td colspan="${ds.length + 3}" class="muted">No participants yet.</td></tr>`}
+    </tbody></table></div></div>`}`;
   for (const x of st.disciplines) {
     const d = x.discipline;
-    h += `<div class="card"><h2>${esc(d.name)}</h2><div class="tableWrap"><table><thead><tr><th>#</th><th>Shooter</th><th class="num">${d.kind === "group" ? "Group (in)" : "Score"}</th>${d.kind === "group" && x.hasCoins ? '<th class="num">Quarter</th><th class="num">Dime</th>' : ""}</tr></thead><tbody>
+    h += `<div class="card"><h2>${esc(d.name)}</h2><div class="tableWrap"><table><thead><tr><th>#</th><th>Participant</th><th class="num">${d.kind === "group" ? "Group (in)" : "Score"}</th>${d.kind === "group" && x.hasCoins ? '<th class="num">Quarter</th><th class="num">Dime</th>' : ""}</tr></thead><tbody>
       ${x.individuals.map((r) => `<tr><td class="rank">${r.rank}</td><td>${esc(St.display(r.person))}<div class="small muted">${esc(St.team(r.person))}</div></td><td class="num">${d.kind === "group" ? fmt(r.value) : fmt(r.value, Number.isInteger(r.value) ? 0 : 1)}${r.entries > 1 ? `<div class="small muted">${r.entries} groups</div>` : ""}</td>${d.kind === "group" && x.hasCoins ? `<td class="num">${r.coins ? `${r.coins.quarter} of ${r.coins.groups}` : "–"}</td><td class="num">${r.coins ? `${r.coins.dime} of ${r.coins.groups}` : "–"}</td>` : ""}</tr>`).join("") || '<tr><td colspan="5" class="muted">No scores yet.</td></tr>'}
       </tbody></table></div></div>`;
   }
@@ -388,6 +547,8 @@ function afterRender() {
   const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
   on("search", "input", (e) => { S.search = e.target.value; const pos = e.target.selectionStart; render(); const s = $("#search"); if (s) { s.focus(); s.setSelectionRange(pos, pos); } });
   on("camIn", "change", (e) => e.target.files[0] && startPhoto(e.target.files[0]));
+  on("qrIn", "change", (e) => e.target.files[0] && importQr(e.target.files[0]));
+  on("xlsIn", "change", (e) => e.target.files[0] && importXlsx(e.target.files[0]));
   on("fileIn", "change", (e) => e.target.files[0] && startPhoto(e.target.files[0]));
   on("calSel", "change", (e) => { S.caliberId = e.target.value; if (S.a?.photo) rerun(); else render(); });
   on("sheetSel", "change", (e) => { const cur = St.settings().sheet || {}; St.setSetting("sheet", { ...cur, id: e.target.value }); if (S.a?.photo && e.target.value !== "custom") rerun(); else render(); });
@@ -679,7 +840,7 @@ function storeGroup(g, pid) {
     caliber: caliberOf(a.calId).label, scaleSource: r.scaleSource, ppi: r.ppi,
   });
   g.savedIds = (g.savedIds || []).concat(pid);
-  g.savedFor = St.display(person(pid));
+  g.savedFor = St.label(person(pid));
   return m;
 }
 
@@ -696,6 +857,7 @@ const actions = {
     e.date = $("#evDate").value;
     e.location = $("#evLoc").value.trim();
     e.shotsPerGroup = Math.max(1, Math.min(20, Number($("#evShots").value) || 5));
+    e.kind = $("#evKind").value;
     if (!e.name) return toast("Give the event a name.");
     const saved = St.saveEvent(e);
     St.setSetting("activeEvent", saved.id);
@@ -734,7 +896,7 @@ const actions = {
     if ($("#pts").value === "" || !isFinite(v) || v < 0) return toast("Enter the score.");
     if (d.max && v > d.max) return toast(`Top score is ${d.max}.`);
     St.saveScore({ eventId: ev.id, personId: S.personId, disciplineId: d.id, disciplineName: d.name, kind: "points", value: v });
-    toast(`Saved ${v} for ${St.display(person(S.personId))}`);
+    toast(`Saved ${v} for ${St.label(person(S.personId))}`);
     S.personId = null; S.search = "";
     render(); doSyncSoon();
   },
@@ -743,6 +905,17 @@ const actions = {
   delShot: () => { const a = S.a, g = a.groups[a.sel]; if (a.selShot == null) return; a.hist.push(JSON.stringify(a.groups)); g.shots.splice(a.selShot, 1); a.selShot = null; render(); },
   undo: () => { const a = S.a; if (!a.hist.length) return; a.groups = JSON.parse(a.hist.pop()); a.selShot = null; render(); },
   fitView: () => { S.a.crop = null; render(); },
+  cancelImport: () => { S.imp = null; render(); },
+  applyImport: (el) => {
+    const r = applyImport(S.imp.payload, el.dataset.into);
+    S.imp = null;
+    toast(`Loaded into ${r.ev.name}: ${r.added} participant${r.added === 1 ? "" : "s"} added`);
+    render(); doSyncSoon();
+  },
+  copyOrg: async () => {
+    try { await navigator.clipboard.writeText(ORGANIZER_URL()); toast("Link copied"); }
+    catch { const r = document.createRange(); r.selectNodeContents($("#orgLink")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast("Link selected. Copy it from the menu."); }
+  },
   copyLink: async () => {
     const t = $("#evLink").textContent;
     try { await navigator.clipboard.writeText(t); toast("Link copied"); }
@@ -763,7 +936,7 @@ const actions = {
     const todo = a.groups.filter((x) => x.shots.length && !(x.savedIds || []).includes(pid));
     const off = todo.filter((x) => x.shots.length !== N).length;
     if (off && !confirmTap(el, `${off === 1 ? "1 group doesn't" : off + " groups don't"} have ${N} shots. Tap again to save all`)) return;
-    const name = St.display(person(pid));
+    const name = St.label(person(pid));
     todo.forEach((g) => storeGroup(g, pid));
     toast(`Saved ${todo.length} groups for ${name}`);
     S.personId = null; S.search = "";
@@ -772,10 +945,10 @@ const actions = {
   saveGroup: (el) => {
     if (activeEvent()?.locked) return toast("Scoring is locked for this event.");
     const a = S.a, N = activeEvent().shotsPerGroup || 5, g = a.groups[a.sel], pid = S.personId;
-    if ((g.savedIds || []).includes(pid)) return toast("This group is already saved for this shooter.");
+    if ((g.savedIds || []).includes(pid)) return toast("This group is already saved for this participant.");
     if (g.shots.length !== N && !confirmTap(el, `Only ${g.shots.length} of ${N} shots. Tap again to save`)) return;
     const m = storeGroup(g, pid);
-    toast(`Saved ${fmt(m.spreadIn)} in for ${St.display(person(pid))}`);
+    toast(`Saved ${fmt(m.spreadIn)} in for ${St.label(person(pid))}`);
     S.personId = null; S.search = "";
     render(); doSyncSoon();
   },
@@ -838,11 +1011,11 @@ function resultRows() {
     .concat(st.patrols.map((p) => [p.rank, p.troop, p.patrol, ...ds.map((d) => (p.by[d.id] ? Math.round(p.by[d.id].points * 10) / 10 : "")), Math.round(p.total * 10) / 10]));
   const per = st.disciplines.map((x) => ({
     name: x.discipline.name,
-    rows: [["Rank", "Shooter", "Troop", "Patrol", x.discipline.kind === "group" ? "Group (in)" : "Score", "Entries", ...(x.hasCoins ? ["Quarter passes", "Dime passes"] : [])]]
+    rows: [["Rank", "Participant", "Troop", "Patrol", x.discipline.kind === "group" ? "Group (in)" : "Score", "Entries", ...(x.hasCoins ? ["Quarter passes", "Dime passes"] : [])]]
       .concat(x.individuals.map((r) => [r.rank, St.display(r.person), r.person.troop, r.person.patrol, x.discipline.kind === "group" ? Math.round(r.value * 1000) / 1000 : r.value, r.entries,
         ...(x.hasCoins ? [r.coins ? `${r.coins.quarter} of ${r.coins.groups}` : "", r.coins ? `${r.coins.dime} of ${r.coins.groups}` : ""] : [])])),
   }));
-  const all = [["When", "Shooter", "Troop", "Patrol", "Event", "Value", "Shots", "Dime", "Quarter", "Caliber", "Scale from", "Instructor"]]
+  const all = [["When", "Participant", "Troop", "Patrol", "Event", "Value", "Shots", "Dime", "Quarter", "Caliber", "Scale from", "Instructor"]]
     .concat(St.scoresFor(ev.id).map((s) => { const p = person(s.personId) || {}; return [new Date(s.at).toLocaleString(), St.display(p), p.troop, p.patrol, s.disciplineName, s.value, s.shots ?? "", s.kind === "group" ? (s.dime ? "yes" : "no") : "", s.kind === "group" ? (s.quarter ? "yes" : "no") : "", s.caliber || "", s.scaleSource || "", s.instructor || ""]; }));
   return { ev, patrols, per, all };
 }
@@ -854,7 +1027,7 @@ async function exportXlsx() {
   const { ev, patrols, per, all } = resultRows();
   const wb = XLSX.utils.book_new();
   const add = (name, aoa) => { const ws = XLSX.utils.aoa_to_sheet(aoa); ws["!cols"] = aoa[0].map((_, i) => ({ wch: Math.min(40, Math.max(8, ...aoa.map((r) => String(r[i] ?? "").length + 2))) })); XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31)); };
-  add("Patrols", [[ev.name], [ev.date + (ev.location ? " · " + ev.location : "")], [], ...patrols]);
+  if (ev.kind !== "merit") add("Patrols", [[ev.name], [ev.date + (ev.location ? " · " + ev.location : "")], [], ...patrols]);
   per.forEach((p) => add(p.name, p.rows));
   add("All scores", all);
   XLSX.writeFile(wb, fileBase(ev) + ".xlsx");
@@ -877,7 +1050,8 @@ async function exportPdf() {
   doc.setFontSize(9); doc.setTextColor(90, 90, 87);
   doc.text("Each event is scored out of 100: the best patrol gets 100 and the rest get their share. Group size is center to center; smaller is better.", 40, 96, { maxWidth: 532 });
   const style = { headStyles: { fillColor: red }, styles: { fontSize: 9 }, margin: { left: 40, right: 40 } };
-  doc.autoTable({ ...style, startY: 112, head: [patrols[0]], body: patrols.slice(1) });
+  if (ev.kind !== "merit") doc.autoTable({ ...style, startY: 112, head: [patrols[0]], body: patrols.slice(1) });
+  else doc.lastAutoTable = { finalY: 90 };
   for (const p of per) {
     let y = doc.lastAutoTable.finalY + 26;
     if (y > 700) { doc.addPage(); y = 50; }

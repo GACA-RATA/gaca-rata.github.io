@@ -1,11 +1,12 @@
 // Keeps the app working with no signal once it has been opened once.
-const VERSION = "rata-scoring-6";
-const SHELL = ["./", "index.html", "styles.css", "config.js", "app.js", "store.js", "engine.js", "worker.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
+const VERSION = "rata-scoring-7";
+const SHELL = ["./", "index.html", "styles.css", "config.js", "app.js", "store.js", "engine.js", "worker.js", "rosterfmt.js", "organizer.html", "RATA_Organizer_Template.xlsx", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 const LIBS = [
   "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js",
+  "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js",
 ];
 
 self.addEventListener("install", (e) => {
@@ -33,7 +34,7 @@ self.addEventListener("fetch", (e) => {
     try {
       // same-site files: always ask the site for the latest copy instead of a stale browser copy
       const fresh = await fetch(req, url.origin === location.origin ? { cache: "no-cache" } : undefined);
-      if (fresh.ok && (url.origin === location.origin || url.hostname === "cdnjs.cloudflare.com")) c.put(req, fresh.clone());
+      if (fresh.ok && (url.origin === location.origin || (url.hostname === "cdnjs.cloudflare.com" || url.hostname === "cdn.jsdelivr.net"))) c.put(req, fresh.clone());
       return fresh;
     } catch {
       const hit = await c.match(req, { ignoreSearch: true });
